@@ -582,25 +582,25 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 	}
 
 	if plan.needApache && !fileExists(m.apacheExe()) {
-		reportProgress(onProgress, 82, "Extracting Apache HTTP Server...")
+		reportProgress(onProgress, 82, "Extracting...")
 		if err := expandZipFresh(paths.apacheZip, paths.apacheExtractDir); err != nil {
 			return err
 		}
 	}
 	if plan.needPHP && !fileExists(m.phpExe(selection.PHP.Version)) {
-		reportProgress(onProgress, 86, "Extracting PHP Runtime "+selection.PHP.Version+"...")
+		reportProgress(onProgress, 86, "Extracting...")
 		if err := expandZipFresh(paths.phpZip, m.phpRoot(selection.PHP.Version)); err != nil {
 			return err
 		}
 	}
 	if plan.needMySQL && !fileExists(m.mysqlExe()) {
-		reportProgress(onProgress, 90, "Extracting MySQL Community Server...")
+		reportProgress(onProgress, 90, "Extracting...")
 		if err := expandZipFresh(paths.mysqlZip, paths.mysqlExtractDir); err != nil {
 			return err
 		}
 	}
 
-	reportProgress(onProgress, 94, "Configuring portable runtime...")
+	reportProgress(onProgress, 94, "Configuring...")
 	if plan.needPHP {
 		if err := m.configurePHP(selection.PHP.Version); err != nil {
 			return err
@@ -713,7 +713,7 @@ func (m *windowsRuntimeManager) ensureApacheLandingPage() error {
 	if err := os.MkdirAll(htdocs, 0o755); err != nil {
 		return err
 	}
-	indexHTML := "<!doctype html><html><head><meta charset=\"utf-8\"><title>aaPanel Lite Bundled Stack</title></head><body><h1>aaPanel Lite Bundled Stack</h1><p>Apache is running from data/runtime.</p></body></html>"
+	indexHTML := "<!doctype html><html><head><meta charset=\"utf-8\"><title>zPanel Bundled Stack</title></head><body><h1>zPanel Bundled Stack</h1><p>Apache is running from data/runtime.</p></body></html>"
 	return os.WriteFile(filepath.Join(htdocs, "index.html"), []byte(indexHTML), 0o644)
 }
 
@@ -1049,9 +1049,9 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 	conf = regexp.MustCompile(`(?m)^\s*PHPIniDir ".*"\r?\n?`).ReplaceAllString(conf, "")
 	conf = regexp.MustCompile(`(?m)^\s*AddHandler application/x-httpd-php \.php\r?\n?`).ReplaceAllString(conf, "")
 	conf = regexp.MustCompile(`(?m)^\s*AddType application/x-httpd-php \.php\r?\n?`).ReplaceAllString(conf, "")
-	conf = regexp.MustCompile(`(?s)\r?\n# aaPanel Lite PHP BEGIN\r?\n.*?# aaPanel Lite PHP END\r?\n?`).ReplaceAllString(conf, "\r\n")
+	conf = regexp.MustCompile(`(?s)\r?\n# zPanel PHP BEGIN\r?\n.*?# zPanel PHP END\r?\n?`).ReplaceAllString(conf, "\r\n")
 	conf = regexp.MustCompile(`(?m)^Include conf/extra/httpd-vhosts\.conf\r?$`).ReplaceAllString(conf, "#Include conf/extra/httpd-vhosts.conf")
-	conf = regexp.MustCompile(`(?m)^Include conf/extra/aapanel-vhosts\.conf\r?$`).ReplaceAllString(conf, "")
+	conf = regexp.MustCompile(`(?m)^Include conf/extra/zpanel-vhosts\.conf\r?$`).ReplaceAllString(conf, "")
 	conf = regexp.MustCompile(`(?m)^IncludeOptional ".*?/etc/sites/\*/apache-vhost\.conf"\r?$`).ReplaceAllString(conf, "")
 	conf += "\r\nIncludeOptional " + m.apacheVHostIncludePath() + "\r\n"
 
@@ -1062,7 +1062,7 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 	if err := m.writeApacheVHostConfig(); err != nil {
 		return err
 	}
-	_ = os.Remove(filepath.Join(m.apacheRoot(), "conf", "extra", "aapanel-vhosts.conf"))
+	_ = os.Remove(filepath.Join(m.apacheRoot(), "conf", "extra", "zpanel-vhosts.conf"))
 
 	if err := m.ensureApacheLandingPage(); err != nil {
 		return err
@@ -1070,7 +1070,7 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 
 	if fileExists(m.phpExe(phpVersion)) {
 		defaultPort := phpFastCGIPort(phpVersion)
-		indexPHP := "<?php\nheader('Content-Type: text/html; charset=utf-8');\necho '<h1>aaPanel Lite Bundled Stack</h1>';\necho '<p>Apache + PHP " + phpVersion + " is running from data/runtime.</p>';\necho '<p>PHP version: ' . PHP_VERSION . '</p>';\n"
+		indexPHP := "<?php\nheader('Content-Type: text/html; charset=utf-8');\necho '<h1>zPanel Bundled Stack</h1>';\necho '<p>Apache + PHP " + phpVersion + " is running from data/runtime.</p>';\necho '<p>PHP version: ' . PHP_VERSION . '</p>';\n"
 		if err := os.WriteFile(filepath.Join(m.apacheRoot(), "htdocs", "index.php"), []byte(indexPHP), 0o644); err != nil {
 			return err
 		}
@@ -1083,7 +1083,7 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 			return err
 		}
 		conf = string(confBytes)
-		phpBlock := "\r\n# aaPanel Lite PHP BEGIN\r\n" +
+		phpBlock := "\r\n# zPanel PHP BEGIN\r\n" +
 			"<Proxy \"fcgi://127.0.0.1:" + strconv.Itoa(defaultPort) + "/\" enablereuse=on max=10>\r\n" +
 			"</Proxy>\r\n" +
 			"ProxyFCGIBackendType GENERIC\r\n" +
@@ -1094,7 +1094,7 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 			"        SetHandler \"proxy:fcgi://127.0.0.1:" + strconv.Itoa(defaultPort) + "/\"\r\n" +
 			"    </FilesMatch>\r\n" +
 			"</Directory>\r\n" +
-			"# aaPanel Lite PHP END\r\n"
+			"# zPanel PHP END\r\n"
 		conf += phpBlock
 		return os.WriteFile(m.httpdConfPath(), []byte(conf), 0o644)
 	}
@@ -1411,7 +1411,7 @@ func (m *windowsRuntimeManager) writeApacheVHostConfig() error {
 		}
 
 		var builder strings.Builder
-		builder.WriteString("# This file is generated by aaPanel Lite.\r\n")
+		builder.WriteString("# This file is generated by zPanel.\r\n")
 		builder.WriteString("# Site: " + site.Domain + "\r\n")
 		status := strings.ToLower(strings.TrimSpace(site.Status))
 		switch {
@@ -1814,7 +1814,7 @@ func (m *windowsRuntimeManager) ensureVCRuntime(onProgress func(appProgressEvent
 
 	// Run silent install
 	// This might require admin, but we'll try.
-	// If it fails with "access denied", the user will have to run aaPanel as admin.
+	// If it fails with "access denied", the user will have to run zPanel as admin.
 	cmd := exec.Command(redistPath, "/quiet", "/install", "/norestart")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Run(); err != nil {

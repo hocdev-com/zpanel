@@ -1,6 +1,6 @@
-# Triển khai aaPanel Lite (Phong cách One-click)
+# Triển khai zPanel (Phong cách One-click)
 
-Để triển khai đơn giản như aaPanel (chỉ với 1 dòng lệnh), bạn có thể làm theo cách sau:
+Để triển khai đơn giản như zPanel (chỉ với 1 dòng lệnh), bạn có thể làm theo cách sau:
 
 ## 1. Chuẩn bị (Trên máy tính cá nhân - Windows)
 Nếu bạn đang dùng Windows, bạn có 2 cách để biên dịch cho Linux:
@@ -35,7 +35,7 @@ Tôi đã tối ưu hóa `install.sh` để:
 
 ## 3. Quy trình đề xuất cho bạn (Chủ sở hữu bảng điều khiển)
 
-Để có trải nghiệm "giống aaPanel nhất", hãy làm như sau:
+Để có trải nghiệm "giống zPanel nhất", hãy làm như sau:
 1. **Biên dịch**: `make linux`
 2. **Đóng gói**: Nén file `zpanel` và `install.sh`.
 3. **Upload**: Đưa lên một host công khai.

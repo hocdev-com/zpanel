@@ -384,7 +384,7 @@ func reportProgress(onProgress func(appProgressEvent), percent int, message stri
 
 func downloadFile(url string, outPath string, label string, startPercent int, endPercent int, onProgress func(appProgressEvent)) error {
 	if fileExists(outPath) {
-		reportProgress(onProgress, endPercent, label+" already available.")
+		reportProgress(onProgress, endPercent, "Already available.")
 		return nil
 	}
 
@@ -401,9 +401,9 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 	}
 
 	if resumeOffset > 0 {
-		reportProgress(onProgress, startPercent, "Resuming "+label+" download...")
+		reportProgress(onProgress, startPercent, "Resuming...")
 	} else {
-		reportProgress(onProgress, startPercent, "Downloading "+label+"...")
+		reportProgress(onProgress, startPercent, "Downloading...")
 	}
 
 	// Custom client with reasonable timeouts
@@ -469,7 +469,7 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 		if lastReported > endPercent {
 			lastReported = endPercent
 		}
-		reportProgress(onProgress, lastReported, "Resuming "+label+" download...")
+		reportProgress(onProgress, lastReported, "Resuming...")
 	}
 
 	// Activity tracker: if no data for 60 seconds, abort
@@ -507,7 +507,7 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 				}
 				if progress > lastReported {
 					lastReported = progress
-					reportProgress(onProgress, progress, "Downloading "+label+"...")
+					reportProgress(onProgress, progress, "Downloading...")
 				}
 			}
 		}
@@ -530,7 +530,7 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 		return err
 	}
 
-	reportProgress(onProgress, endPercent, label+" downloaded.")
+	reportProgress(onProgress, endPercent, "Downloaded.")
 	return nil
 }
 

@@ -1,6 +1,6 @@
-# aaPanel Lite
+# zPanel
 
-aaPanel Lite is a portable WAMP (Windows, Apache, MySQL, PHP) stack manager for Windows. It provides a simple GUI and API to manage local development environments with ease.
+zPanel is a portable WAMP (Windows, Apache, MySQL, PHP) stack manager for Windows. It provides a simple GUI and API to manage local development environments with ease.
 
 ## Features
 

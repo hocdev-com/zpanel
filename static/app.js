@@ -1029,7 +1029,6 @@ async function startInstallJob(id, version = "") {
 
     const jobKey = id === "php" ? `${id}:${version}` : id;
     syncInstallJob(job, jobKey);
-    updatePersistentToast(`app-install-${jobKey}`, "Downloading", job.message || formatAppActionLabel("install", id, version), "success");
     renderApps(latestAppsPayload);
     pollInstallJob(id, version);
 }
@@ -1086,7 +1085,6 @@ async function pollInstallJob(id, version = "") {
     try {
         const job = await api(`/api/apps/progress?id=${encodeURIComponent(id)}${version ? `&version=${encodeURIComponent(version)}` : ""}`);
         syncInstallJob(job, jobKey);
-        updatePersistentToast(`app-install-${jobKey}`, "Downloading", job.message || "Installing...", "success");
 
         if (job.status === "running") {
             renderApps(latestAppsPayload);
@@ -1103,7 +1101,6 @@ async function pollInstallJob(id, version = "") {
             }
             await new Promise(resolve => setTimeout(resolve, 300));
             await refreshApps({ force: true });
-            showResult(job.message || "Application installed.");
             await refreshStatusOnly();
             return;
         }

@@ -41,7 +41,7 @@ func ensureLocalDomainMapping(domain string) error {
 	updated := strings.Join(lines, "\n")
 	if err := os.WriteFile(linuxHostsFile, []byte(updated), 0o644); err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return errors.New("cannot update /etc/hosts. Please run aaPanel Lite as root or with sudo to activate custom domains")
+			return errors.New("cannot update /etc/hosts. Please run zPanel as root or with sudo to activate custom domains")
 		}
 		return fmt.Errorf("failed to update /etc/hosts: %w", err)
 	}
@@ -90,7 +90,7 @@ func removeLocalDomainMapping(domain string) error {
 	updated := strings.Join(updatedLines, "\n")
 	if err := os.WriteFile(linuxHostsFile, []byte(updated), 0o644); err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return errors.New("cannot update /etc/hosts. Please run aaPanel Lite as root or with sudo to clean up custom domains")
+			return errors.New("cannot update /etc/hosts. Please run zPanel as root or with sudo to clean up custom domains")
 		}
 		return fmt.Errorf("failed to update /etc/hosts: %w", err)
 	}

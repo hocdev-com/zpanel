@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# aaPanel Lite - VPS Installer (Ubuntu/CentOS)
+# zPanel - VPS Installer (Ubuntu/CentOS)
 # Support: Ubuntu 20.04+, CentOS 7+
 
 set -e
@@ -9,7 +9,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo -e "${GREEN}Starting aaPanel Lite Installation...${NC}"
+echo -e "${GREEN}Starting zPanel Installation...${NC}"
 
 # Check for root
 if [ "$EUID" -ne 0 ]; then
@@ -56,7 +56,7 @@ chmod +x zpanel
 echo "Creating systemd service..."
 cat > /etc/systemd/system/zpanel.service <<EOF
 [Unit]
-Description=aaPanel Lite Control Panel
+Description=zPanel Control Panel
 After=network.target
 
 [Service]
@@ -75,6 +75,6 @@ systemctl daemon-reload
 systemctl enable zpanel
 systemctl start zpanel
 
-echo -e "${GREEN}aaPanel Lite installed successfully!${NC}"
+echo -e "${GREEN}zPanel installed successfully!${NC}"
 echo -e "Access URL: http://$(curl -s ifconfig.me):8888"
 echo -e "Management: systemctl [start|stop|status] zpanel"

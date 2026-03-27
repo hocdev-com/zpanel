@@ -21,7 +21,7 @@ func releasePlatformInstance() {}
 
 func runPlatformShell(ctx context.Context, stop context.CancelFunc, controller *serverController, appRoot string, dashboardURL string) error {
 	_ = appRoot
-	fmt.Printf("aaPanel Lite started. Dashboard available at: %s\n", dashboardURL)
+	fmt.Printf("zPanel started. Dashboard available at: %s\n", dashboardURL)
 	fmt.Println("Press Ctrl+C to stop.")
 
 	sigChan := make(chan os.Signal, 1)

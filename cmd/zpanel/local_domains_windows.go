@@ -40,7 +40,7 @@ func ensureLocalDomainMapping(domain string) error {
 	updated := strings.Join(lines, "\r\n")
 	if err := os.WriteFile(windowsHostsFile, []byte(updated), 0o644); err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return errors.New("cannot update Windows hosts file. Please run aaPanel Lite as Administrator to activate custom domains like " + normalizedDomain)
+			return errors.New("cannot update Windows hosts file. Please run zPanel as Administrator to activate custom domains like " + normalizedDomain)
 		}
 		return fmt.Errorf("failed to update Windows hosts file: %w", err)
 	}
@@ -88,7 +88,7 @@ func removeLocalDomainMapping(domain string) error {
 	updated := strings.Join(updatedLines, "\r\n")
 	if err := os.WriteFile(windowsHostsFile, []byte(updated), 0o644); err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return errors.New("cannot update Windows hosts file. Please run aaPanel Lite as Administrator to clean up custom domains like " + normalizedDomain)
+			return errors.New("cannot update Windows hosts file. Please run zPanel as Administrator to clean up custom domains like " + normalizedDomain)
 		}
 		return fmt.Errorf("failed to update Windows hosts file: %w", err)
 	}

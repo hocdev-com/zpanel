@@ -319,7 +319,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("aaPanel Lite v%s\n", version)
+		fmt.Printf("zPanel v%s\n", version)
 		return
 	}
 
@@ -1224,7 +1224,7 @@ func getWebsite(appRoot string, domain string) (websiteRecord, error) {
 			}
 			content = legacyContent
 		} else {
-			// Migration: try to load from legacy .aapanel- status files in www/{domain}
+			// Migration: try to load from legacy .zpanel- status files in www/{domain}
 			legacyPath := filepath.Join(appRoot, "www", domain)
 			if info, err := os.Stat(legacyPath); err == nil && info.IsDir() {
 				status, _ := readWebsiteStatusLegacy(legacyPath)
@@ -1422,7 +1422,7 @@ func saveWebsiteConfig(appRoot string, config websiteConfig) error {
 }
 
 func readWebsiteStatusLegacy(pathValue string) (string, error) {
-	content, err := os.ReadFile(filepath.Join(pathValue, ".aapanel-status"))
+	content, err := os.ReadFile(filepath.Join(pathValue, ".zpanel-status"))
 	if err != nil {
 		return "running", nil
 	}
@@ -1435,7 +1435,7 @@ func readWebsiteStatusLegacy(pathValue string) (string, error) {
 }
 
 func readWebsitePHPVersionLegacy(pathValue string) (string, error) {
-	content, err := os.ReadFile(filepath.Join(pathValue, ".aapanel-php-version"))
+	content, err := os.ReadFile(filepath.Join(pathValue, ".zpanel-php-version"))
 	if err != nil {
 		return defaultWebsitePHPVersion, nil
 	}
@@ -1675,7 +1675,7 @@ if (isset($_GET['q'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>aaPanel Lite</title>
+    <title>zPanel</title>
 
     <link href="https://fonts.googleapis.com/css?family=Karla:400" rel="stylesheet">
 
@@ -1746,7 +1746,7 @@ if (isset($_GET['q'])) {
 
 <div class="container">
     <div class="content">
-        <h1 class="title">aaPanel Lite</h1>
+        <h1 class="title">zPanel</h1>
 
         <div class="info">
             <?php if ($isLocal): ?>

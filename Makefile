@@ -1,4 +1,4 @@
-# Makefile for aaPanel Lite cross-platform build
+# Makefile for zPanel cross-platform build
 
 BINARY_NAME=zpanel
 CMD_DIR=./cmd/zpanel

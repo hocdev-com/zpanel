@@ -150,9 +150,9 @@ const (
 )
 
 const (
-	mainWindowClass = "AAPanelLiteControlPanel"
-	mainWindowTitle = "aaPanel Lite"
-	instanceName    = "Local\\AAPanelLiteSingleton"
+	mainWindowClass = "ZPanelControlPanel"
+	mainWindowTitle = "zPanel"
+	instanceName    = "Local\\ZPanelSingleton"
 	trayIconID      = 1001
 	menuShowID      = 2001
 	menuOpenID      = 2002
@@ -497,7 +497,7 @@ func (s *controlPanelShell) paint() {
 
 	fillRect(hdc, rect{Left: 36, Top: 20, Right: 94, Bottom: 78}, rgb(36, 116, 255))
 	drawText(hdc, "AP", rect{Left: 36, Top: 20, Right: 94, Bottom: 78}, s.fonts.Title, rgb(248, 251, 255), dtCenter|dtVCenter|dtSingleLine)
-	drawText(hdc, "aaPanel Lite", rect{Left: 116, Top: 20, Right: client.Right - 24, Bottom: 52}, s.fonts.Title, rgb(248, 251, 255), dtLeft|dtVCenter|dtSingleLine)
+	drawText(hdc, "zPanel", rect{Left: 116, Top: 20, Right: client.Right - 24, Bottom: 52}, s.fonts.Title, rgb(248, 251, 255), dtLeft|dtVCenter|dtSingleLine)
 	drawText(hdc, "Lightweight local control panel", rect{Left: 116, Top: 52, Right: client.Right - 24, Bottom: 76}, s.fonts.Small, rgb(160, 184, 220), dtLeft|dtVCenter|dtSingleLine)
 
 	drawText(hdc, "Access Link", rect{Left: 44, Top: 128, Right: client.Right - 44, Bottom: 146}, s.fonts.Caption, rgb(125, 176, 255), dtLeft|dtVCenter|dtSingleLine)
@@ -756,7 +756,7 @@ func (s *controlPanelShell) showLastError() {
 	if message == "" {
 		return
 	}
-	s.showMessage("aaPanel Lite", message, mbIconError)
+	s.showMessage("zPanel", message, mbIconError)
 }
 
 func (s *controlPanelShell) showMessage(titleText string, message string, flags uintptr) {
