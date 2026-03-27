@@ -1767,7 +1767,7 @@ if (isset($_GET['q'])) {
 
         <div class="opt">
             <p>
-                <a href="https://github.com/hocdev2024/zpanel" target="_blank" rel="noopener">
+                <a href="https://github.com/hocdev-com/zpanel" target="_blank" rel="noopener">
                     Documentation
                 </a>
             </p>
