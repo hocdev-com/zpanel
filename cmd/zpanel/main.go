@@ -533,30 +533,77 @@ func registerRoutes(mux *http.ServeMux, state *appState) {
 }
 
 func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
-	settings := s.loadAppSettings()
+	dashboardSettings := s.loadAppSettings()
+	appStoreSettings := loadAppStoreSettingsFromDB(s.appRoot)
+
 	for i := range apps {
-		apps[i].ShowOnDashboard = settings[apps[i].ID]
-		if apps[i].ID == "php" {
-			apps[i].ShowOnDashboardVersions = make(map[string]bool)
-			// Check all installed versions
-			for _, ver := range apps[i].InstalledVersions {
-				key := "php:" + ver
-				if val, ok := settings[key]; ok {
-					apps[i].ShowOnDashboardVersions[ver] = val
-				} else {
-					// Default to whatever the main "php" toggle says if not specifically set
-					apps[i].ShowOnDashboardVersions[ver] = settings["php"]
+		appID := apps[i].ID
+		apps[i].VersionTitles = make(map[string]string)
+		apps[i].ShowOnDashboardVersions = make(map[string]bool)
+
+		apps[i].ShowOnDashboard = valueAtBool(appStoreSettings.ShowOnDashboard, appID, apps[i].Version)
+		if legacyValue, ok := dashboardSettings[appID]; ok {
+			apps[i].ShowOnDashboard = legacyValue || apps[i].ShowOnDashboard
+		}
+
+		versionSet := map[string]struct{}{}
+		for _, ver := range apps[i].AvailableVersions {
+			if strings.TrimSpace(ver) != "" {
+				versionSet[ver] = struct{}{}
+			}
+		}
+		for _, ver := range apps[i].InstalledVersions {
+			if strings.TrimSpace(ver) != "" {
+				versionSet[ver] = struct{}{}
+			}
+		}
+		for _, ver := range apps[i].RunningVersions {
+			if strings.TrimSpace(ver) != "" {
+				versionSet[ver] = struct{}{}
+			}
+		}
+		if version := strings.TrimSpace(apps[i].Version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+		if appStoreSettings.ShowOnDashboard != nil && appStoreSettings.ShowOnDashboard[appID] != nil {
+			for ver := range appStoreSettings.ShowOnDashboard[appID] {
+				if strings.TrimSpace(ver) != "" {
+					versionSet[ver] = struct{}{}
 				}
 			}
-			// Also check all available versions to ensure they have a default state in UI
-			for _, ver := range apps[i].AvailableVersions {
-				if _, ok := apps[i].ShowOnDashboardVersions[ver]; !ok {
-					key := "php:" + ver
-					if val, ok := settings[key]; ok {
-						apps[i].ShowOnDashboardVersions[ver] = val
-					} else {
-						apps[i].ShowOnDashboardVersions[ver] = settings["php"]
-					}
+		}
+
+		for ver := range versionSet {
+			if title := strings.TrimSpace(valueAt(appStoreSettings.Titles, appID, ver)); title != "" {
+				apps[i].VersionTitles[ver] = title
+			} else {
+				apps[i].VersionTitles[ver] = defaultAppStoreReleaseTitle(appID, ver)
+			}
+
+			isShown := valueAtBool(appStoreSettings.ShowOnDashboard, appID, ver)
+			if legacyValue, ok := dashboardSettings[appID+":"+ver]; ok {
+				isShown = legacyValue || isShown
+			}
+			if !isShown {
+				if legacyValue, ok := dashboardSettings[appID]; ok {
+					isShown = legacyValue
+				}
+			}
+			apps[i].ShowOnDashboardVersions[ver] = isShown
+		}
+
+		version := apps[i].Version
+		if title, ok := apps[i].VersionTitles[version]; ok {
+			apps[i].Name = title
+		} else {
+			apps[i].Name = defaultAppStoreReleaseTitle(appID, version)
+		}
+
+		if appID == "php" {
+			for _, show := range apps[i].ShowOnDashboardVersions {
+				if show {
+					apps[i].ShowOnDashboard = true
+					break
 				}
 			}
 		}
@@ -619,11 +666,44 @@ func (s *appState) handleDashboardToggle(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	settings := s.loadAppSettings()
-	settings[req.ID] = req.Value
-	if err := s.saveAppSettings(settings); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+	// Preserve existing dashboard settings for compatibility
+	dashboardSettings := s.loadAppSettings()
+	dashboardSettings[req.ID] = req.Value
+	_ = s.saveAppSettings(dashboardSettings)
+
+	// Also save to panel.db for per-version precision
+	appID := req.ID
+	version := ""
+	if strings.Contains(req.ID, ":") {
+		parts := strings.SplitN(req.ID, ":", 2)
+		appID = parts[0]
+		version = parts[1]
+	} else {
+		// If only appID is provided, try to find a relevant version (e.g. current installed one)
+		manager := newRuntimeManager(s.appRoot)
+		if status, err := manager.Status(); err == nil {
+			for _, app := range status.Apps {
+				if app.ID == appID {
+					version = app.Version
+					break
+				}
+			}
+		}
+	}
+
+	if version != "" {
+		dbSettings := loadAppStoreSettingsFromDB(s.appRoot)
+		if dbSettings.ShowOnDashboard == nil {
+			dbSettings.ShowOnDashboard = map[string]map[string]bool{}
+		}
+		if dbSettings.ShowOnDashboard[appID] == nil {
+			dbSettings.ShowOnDashboard[appID] = map[string]bool{}
+		}
+		dbSettings.ShowOnDashboard[appID][version] = req.Value
+		if err := saveAppStoreSettingsToDB(s.appRoot, dbSettings); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"id": req.ID, "show_on_dashboard": req.Value})

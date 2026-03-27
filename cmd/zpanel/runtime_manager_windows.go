@@ -478,7 +478,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	}
 
 	apps := []runtimeApp{
-		newRuntimeApp("apache", "Apache HTTP Server", versionOrDefault(installedApacheVersion(m.apacheRoot()), apacheReleases[0].Version), availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, "8081", "http://127.0.0.1:8081/", releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
+		newRuntimeApp("apache", "Apache", versionOrDefault(installedApacheVersion(m.apacheRoot()), apacheReleases[0].Version), availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, "8081", "http://127.0.0.1:8081/", releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
 	}
 
 	// Detect all installed PHP versions
@@ -499,12 +499,12 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	if apacheRunning {
 		phpURL = "http://127.0.0.1:8081/phpinfo.php"
 	}
-	phpApp := newRuntimeApp("php", "PHP Runtime", mainPHPVersion, availableVersions(phpReleases), "Portable PHP runtime. Multiple versions supported per website.", phpInstallPath, phpInstalled, phpRunning, "9000+", phpURL, releaseURLs(phpReleases), phpInstalled && !phpRunning, phpRunning, apacheRunning, phpInstalled)
+	phpApp := newRuntimeApp("php", "PHP", mainPHPVersion, availableVersions(phpReleases), "Portable PHP runtime. Multiple versions supported per website.", phpInstallPath, phpInstalled, phpRunning, "9000+", phpURL, releaseURLs(phpReleases), phpInstalled && !phpRunning, phpRunning, apacheRunning, phpInstalled)
 	phpApp.InstalledVersions = installedPHPs
 	phpApp.RunningVersions = runningPHPs
 	apps = append(apps, phpApp)
 
-	apps = append(apps, newRuntimeApp("mysql", "MySQL Community Server", versionOrDefault(installedMySQLVersion(m.mysqlRoot()), mysqlReleases[0].Version), availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled))
+	apps = append(apps, newRuntimeApp("mysql", "MySQL", versionOrDefault(installedMySQLVersion(m.mysqlRoot()), mysqlReleases[0].Version), availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled))
 
 	return apps
 }

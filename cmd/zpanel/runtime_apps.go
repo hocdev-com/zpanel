@@ -20,6 +20,7 @@ type runtimeApp struct {
 	Version           string   `json:"version"`
 	SelectedVersion   string   `json:"selected_version,omitempty"`
 	AvailableVersions []string `json:"available_versions,omitempty"`
+	VersionTitles     map[string]string `json:"version_titles,omitempty"`
 	InstalledVersions []string `json:"installed_versions,omitempty"`
 	RunningVersions   []string `json:"running_versions,omitempty"`
 	Description       string          `json:"description"`

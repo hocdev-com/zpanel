@@ -222,7 +222,7 @@ function loadCachedWebsites() {
 function saveCachedWebsites(websites) {
     try {
         window.localStorage.setItem(WEBSITE_CACHE_KEY, JSON.stringify(Array.isArray(websites) ? websites : []));
-    } catch {}
+    } catch { }
 }
 
 function renderWebsiteList(websites) {
@@ -476,13 +476,11 @@ function databaseCard(database) {
 }
 
 function normalizeAppDisplayName(name) {
-    if (name === "Apache HTTP Server") {
-        return "Apache Server";
-    }
-    if (name === "MySQL Community Server") {
-        return "MySQL Server";
-    }
-    return name;
+    // Backend now provides the display title from panel.db (e.g. "Apache Server", "PHP Runtime")
+    const n = String(name || "").trim();
+    if (n === "Apache HTTP Server") return "Apache Server";
+    if (n === "MySQL Community Server") return "MySQL Server";
+    return n;
 }
 
 function appStoreRow(app) {
@@ -492,6 +490,9 @@ function appStoreRow(app) {
     // For PHP per-version rows, track specific version via row-version
     if (app._rowVersion) wrapper.dataset.rowVersion = app._rowVersion;
     const displayVersion = app._rowVersion || app.version;
+    const dashboardToggleId = app._rowVersion
+        ? (String(app.id || "").includes(":") ? app.id : `${app.id}:${app._rowVersion}`)
+        : app.id;
     const jobKey = app.id === "php" ? `${app.id}:${displayVersion}` : app.id;
     const installJob = appInstallJobs.get(jobKey);
 
@@ -570,7 +571,7 @@ function appStoreRow(app) {
         </div>
         <div class="app-table-cell app-toggle-cell">
             <label class="toggle-switch">
-                <input type="checkbox" data-app-dashboard-toggle="${app._rowVersion ? app.id + ':' + app._rowVersion : app.id}" ${app.show_on_dashboard ? "checked" : ""}>
+                <input type="checkbox" data-app-dashboard-toggle="${dashboardToggleId}" ${app.show_on_dashboard ? "checked" : ""}>
                 <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
         </div>
@@ -630,7 +631,7 @@ function buildPHPVersionRows(app) {
             ...app,
             _rowVersion: ver,
             _isFirstPhpRow: idx === 0,
-            name: `PHP Runtime ${ver}`,
+            name: app.version_titles?.[ver] || `${app.name} ${ver}`,
             version: ver,
             installed: isThisVersionInstalled,
             can_install: !isThisVersionInstalled,
@@ -645,13 +646,40 @@ function buildPHPVersionRows(app) {
     });
 }
 
+function buildGenericVersionRows(app) {
+    const availableVersions = Array.isArray(app.available_versions) ? app.available_versions : [];
+    if (availableVersions.length === 0) return [app];
+    
+    return availableVersions.map((ver, idx) => {
+        const isThisVersionInstalled = app.installed && String(app.version) === String(ver);
+        const isShown = app.show_on_dashboard_versions ? app.show_on_dashboard_versions[ver] : (isThisVersionInstalled && app.show_on_dashboard);
+        
+        return {
+            ...app,
+            _rowVersion: ver,
+            _isFirstRow: idx === 0,
+            name: app.version_titles?.[ver] || `${app.name} ${ver}`,
+            version: ver,
+            installed: isThisVersionInstalled,
+            can_install: !isThisVersionInstalled,
+            can_uninstall: isThisVersionInstalled,
+            can_start: isThisVersionInstalled ? app.can_start : false,
+            can_stop: isThisVersionInstalled ? app.can_stop : false,
+            status: isThisVersionInstalled ? app.status : "not-installed",
+            status_label: isThisVersionInstalled ? app.status_label : "Not installed",
+            show_on_dashboard: isShown,
+            id: app.id, // Generic apps keep their base ID for API calls
+        };
+    });
+}
+
 function expandAppsForDisplay(apps) {
     const appItems = Array.isArray(apps) ? apps : [];
     return appItems.flatMap((app) => {
-        if (app.id !== "php") {
-            return [app];
+        if (app.id === "php") {
+            return buildPHPVersionRows(app);
         }
-        return buildPHPVersionRows(app);
+        return buildGenericVersionRows(app);
     });
 }
 
@@ -669,7 +697,7 @@ function updateSoftwareSnapshot(apps) {
         if (!app.show_on_dashboard) continue;
 
         const cardId = String(app.id || "").startsWith("php:") ? "php" : app.id;
-        const cardName = app._rowVersion ? `PHP ${app._rowVersion}` : app.name;
+        const cardName = app.name;
         listContainer.appendChild(createSoftwareCard(cardId, cardName, app.version, app.status_label || "Running"));
         count++;
     }
@@ -755,7 +783,7 @@ function syncRunningInstallJobs(apps) {
         }
 
         if (!appInstallPollers.has(jobKey) && !appInstallPollRequests.has(jobKey)) {
-            pollInstallJob(app.id, version).catch(() => {});
+            pollInstallJob(app.id, version).catch(() => { });
         }
     });
 }
@@ -819,7 +847,7 @@ function renderAppStoreSettings(payload) {
     const rows = groups.flatMap((group) => {
         const releases = Array.isArray(group.releases) ? group.releases : [];
         return releases.map((release) => `
-            <label class="app-store-settings-row">
+            <div class="app-store-settings-row">
                 <span class="app-store-settings-title">
                     <input
                         type="text"
@@ -850,7 +878,7 @@ function renderAppStoreSettings(payload) {
                         placeholder="${escapeHTML(release.default_url || "")}"
                     />
                 </span>
-            </label>
+            </div>
         `);
     }).join("");
 
@@ -1013,7 +1041,7 @@ async function handleAppStoreAction(action, id, version = "") {
         if (latestAppsPayload.length > 0) {
             renderApps(latestAppsPayload);
         } else {
-            await refreshApps().catch(() => {});
+            await refreshApps().catch(() => { });
         }
     } finally {
         appActionInFlight.delete(id);
@@ -1077,7 +1105,7 @@ async function pollInstallJob(id, version = "") {
 
     const scheduleNext = (delay = 700) => {
         const timer = setTimeout(() => {
-            pollInstallJob(id, version).catch(() => {});
+            pollInstallJob(id, version).catch(() => { });
         }, delay);
         appInstallPollers.set(jobKey, timer);
     };
@@ -1321,7 +1349,7 @@ appStoreListEl.addEventListener("change", async (event) => {
         // Update local payload and refresh snapshot
         const updated = latestAppsPayload.map((app) => {
             if (appId.includes(":")) {
-                const [baseId, version] = appId.split(":");
+                const [baseId, version] = appId.split(":", 2);
                 if (app.id === baseId) {
                     const versions = { ...(app.show_on_dashboard_versions || {}) };
                     versions[version] = value;
@@ -1601,7 +1629,7 @@ async function refreshAll(options = {}) {
     await refreshStatusOnly();
 
     await ensureViewData(activeView, { force });
-    
+
     clearAppCardPendingState();
 }
 
@@ -1749,7 +1777,7 @@ function scheduleStatusRefresh(immediate = false) {
 
     statusRefreshTimer = setTimeout(() => {
         refreshStatusOnly()
-            .catch(() => {})
+            .catch(() => { })
             .finally(() => {
                 scheduleStatusRefresh();
             });
