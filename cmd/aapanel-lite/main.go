@@ -32,7 +32,7 @@ import (
 
 	"net/http/cgi"
 
-	embeddedassets "aapanel-lite"
+	embeddedassets "zpanel"
 )
 
 var version = "0.1.1"
@@ -1767,7 +1767,7 @@ if (isset($_GET['q'])) {
 
         <div class="opt">
             <p>
-                <a href="https://github.com/aapanel-lite/aapanel-lite" target="_blank" rel="noopener">
+                <a href="https://github.com/hocdev2024/zpanel" target="_blank" rel="noopener">
                     Documentation
                 </a>
             </p>

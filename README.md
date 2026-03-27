@@ -14,7 +14,7 @@ aaPanel Lite is a portable WAMP (Windows, Apache, MySQL, PHP) stack manager for 
 
 ## Installation
 
-1. Download the latest `aapanel-lite.exe`.
+1. Download the latest `zpanel.exe`.
 2. Place it in a directory where you want your data to be stored.
 3. Run the executable. It will create a `data` directory and a `config.toml` file.
 
@@ -53,7 +53,7 @@ build.bat -output custom-name.exe -version 0.1.1
 This will:
 1. Compile the Go source code with the GUI flag.
 2. Embed the application icon.
-3. Output `aapanel-lite.exe` in the root directory.
+3. Output `zpanel.exe` in the root directory.
 
 ## Architecture
 

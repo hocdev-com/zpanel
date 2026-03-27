@@ -1,4 +1,4 @@
-module aapanel-lite
+module zpanel
 
 go 1.26.0
 

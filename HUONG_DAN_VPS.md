@@ -8,14 +8,14 @@ Nếu bạn đang dùng Windows, bạn có 2 cách để biên dịch cho Linux:
 **Cách 1: Sử dụng PowerShell (Khuyên dùng)**
 1. Mở PowerShell trong thư mục dự án.
 2. Chạy file: `./build.ps1`
-   - File thực thi cho Linux sẽ nằm tại `build/linux/aapanel-lite`.
+   - File thực thi cho Linux sẽ nằm tại `build/linux/zpanel`.
 
 **Cách 2: Sử dụng Makefile (Nếu đã cài GNU Make)**
 - Chạy lệnh: `make linux`
 
 ## 2. Cách triển khai One-Click (Nếu bạn đã tải lên bảng điều khiển)
 
-Sau khi bạn đã nén thư mục chứa `aapanel-lite` và `install.sh` thành `aapanel-lite.tar.gz` và để nó trên một máy chủ web (ví dụ: GitHub hoặc server riêng), người dùng chỉ cần chạy:
+Sau khi bạn đã nén thư mục chứa `zpanel` và `install.sh` thành `zpanel.tar.gz` và để nó trên một máy chủ web (ví dụ: GitHub hoặc server riêng), người dùng chỉ cần chạy:
 
 ```bash
 # Đối với Ubuntu
@@ -37,15 +37,15 @@ Tôi đã tối ưu hóa `install.sh` để:
 
 Để có trải nghiệm "giống aaPanel nhất", hãy làm như sau:
 1. **Biên dịch**: `make linux`
-2. **Đóng gói**: Nén file `aapanel-lite` và `install.sh`.
+2. **Đóng gói**: Nén file `zpanel` và `install.sh`.
 3. **Upload**: Đưa lên một host công khai.
 4. **Chia sẻ**: Gửi lệnh wget/curl cho người dùng cuối.
 
  ---
 **Lệnh cài đặt mẫu (Bạn có thể copy và sửa URL):**
 ```bash
-URL="http://your-server.com/aapanel-lite"
-wget -O aapanel-lite $URL && chmod +x aapanel-lite && ./aapanel-lite -install
+URL="http://your-server.com/zpanel"
+wget -O zpanel $URL && chmod +x zpanel && ./zpanel -install
 ```
 
 *(Lưu ý: Tôi đã thiết kế bảng điều khiển này theo hướng "Lite" - tức là không cần cài đặt phức tạp, chỉ cần duy nhất 1 file thực thi là có thể chạy ngay lập tức).*

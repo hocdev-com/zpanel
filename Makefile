@@ -1,7 +1,7 @@
 # Makefile for aaPanel Lite cross-platform build
 
-BINARY_NAME=aapanel-lite
-CMD_DIR=./cmd/aapanel-lite
+BINARY_NAME=zpanel
+CMD_DIR=./cmd/zpanel
 BUILD_DIR=./build
 
 .PHONY: all clean windows linux

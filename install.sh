@@ -36,25 +36,25 @@ elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ]; then
 fi
 
 # Create directory
-INSTALL_DIR="/opt/aapanel-lite"
+INSTALL_DIR="/opt/zpanel"
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
 # Download Binary (Placeholder URL - replace with your actual release URL)
-# For now, we assume the binary 'aapanel-lite' is in the same directory as this script
-if [ -f "./aapanel-lite" ]; then
+# For now, we assume the binary 'zpanel' is in the same directory as this script
+if [ -f "./zpanel" ]; then
     echo "Using local binary."
 else
-    echo -e "${RED}Binary 'aapanel-lite' not found in current directory.${NC}"
+    echo -e "${RED}Binary 'zpanel' not found in current directory.${NC}"
     echo "Please build it using 'make linux' first and place it here."
     exit 1
 fi
 
-chmod +x aapanel-lite
+chmod +x zpanel
 
 # Create Systemd Service
 echo "Creating systemd service..."
-cat > /etc/systemd/system/aapanel-lite.service <<EOF
+cat > /etc/systemd/system/zpanel.service <<EOF
 [Unit]
 Description=aaPanel Lite Control Panel
 After=network.target
@@ -63,7 +63,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/aapanel-lite -port 8888
+ExecStart=$INSTALL_DIR/zpanel -port 8888
 Restart=always
 
 [Install]
@@ -72,9 +72,9 @@ EOF
 
 # Start Service
 systemctl daemon-reload
-systemctl enable aapanel-lite
-systemctl start aapanel-lite
+systemctl enable zpanel
+systemctl start zpanel
 
 echo -e "${GREEN}aaPanel Lite installed successfully!${NC}"
 echo -e "Access URL: http://$(curl -s ifconfig.me):8888"
-echo -e "Management: systemctl [start|stop|status] aapanel-lite"
+echo -e "Management: systemctl [start|stop|status] zpanel"
