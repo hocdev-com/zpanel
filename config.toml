@@ -1,0 +1,4 @@
+port = 8080
+base_dir = "./data"
+max_memory_mb = 512
+log_level = "warn"
