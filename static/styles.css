@@ -1800,11 +1800,11 @@ button.ghost {
     align-items: center;
     gap: 6px;
     min-width: 0;
-    padding: 4px;
-    border-radius: 14px;
-    background: linear-gradient(180deg, #f8fbfe 0%, #eef4f8 100%);
-    border: 1px solid #dfe9f2;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
     width: var(--operate-main-width);
 }
 
@@ -1825,18 +1825,18 @@ button.ghost {
     align-items: center;
     justify-content: center;
     border-radius: 10px;
-    border: 1px solid #d7e1ea;
-    background: #ffffff;
+    border: 0;
+    background: transparent;
     color: #475569;
     font-size: 0.99rem;
     line-height: 1;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    box-shadow: none;
 }
 
 .op-menu-btn:hover {
-    background: #f8fbfe;
-    border-color: #c9d7e4;
+    background: transparent;
     transform: none;
+    box-shadow: none;
 }
 
 @container app-store-table (max-width: 1120px) {
@@ -1939,18 +1939,18 @@ button.ghost {
 
 .op-start {
     background: linear-gradient(180deg, #158f86 0%, #11756e 100%);
-    box-shadow: 0 10px 18px rgba(17, 117, 110, 0.18);
+    box-shadow: none;
 }
 
 .op-stop {
     background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
-    box-shadow: 0 10px 18px rgba(220, 38, 38, 0.18);
+    box-shadow: none;
 }
 
 .op-uninstall {
-    background: #ffffff;
+    background: #fff3f5;
     color: #a11d33;
-    border: 1px solid #f0c9d0;
+    border: 1px solid #f3c5ce;
 }
 
 /* Install combo inside operate */
@@ -1973,7 +1973,7 @@ button.ghost {
     min-height: 32px;
     padding: 6px 9px;
     font-size: 0.78rem;
-    box-shadow: 0 10px 18px rgba(29, 78, 216, 0.16);
+    box-shadow: none;
 }
 
 .app-install-toggle {
@@ -1989,6 +1989,15 @@ button.ghost {
     position: relative;
     margin-left: 0;
     border-left: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: none;
+}
+
+.app-operate-cell .op-btn:hover,
+.app-operate-cell .app-install-main:hover,
+.app-operate-cell .app-install-toggle:hover,
+.app-operate-cell .op-menu-btn:hover {
+    transform: none;
+    box-shadow: none;
 }
 
 .app-install-toggle::after {
