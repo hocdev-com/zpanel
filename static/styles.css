@@ -1447,50 +1447,56 @@ button.ghost {
 
 /* === App Store Table === */
 .app-table-wrap {
-    --app-table-side-pad: 18px;
-    --app-table-cell-pad: 10px;
-    --app-table-right-shift: 10px;
+    --app-table-side-pad: 14px;
+    --app-table-cell-pad: 8px;
+    --app-table-right-shift: 6px;
     container-type: inline-size;
     container-name: app-store-table;
-    border: 1px solid #dce8f0;
-    border-radius: 18px;
+    border: 1px solid #d6e3ee;
+    border-radius: 16px;
     overflow: hidden;
     margin-top: 4px;
-    background: #fff;
+    background:
+        linear-gradient(180deg, rgba(248, 251, 255, 0.96) 0%, #ffffff 100%);
     position: relative;
     isolation: isolate;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.05);
 }
 
 .app-table-head,
 .app-table-row {
     display: grid;
-    grid-template-columns: minmax(220px, 1.68fr) minmax(96px, 0.62fr) minmax(240px, 1.96fr) minmax(74px, 0.42fr) minmax(132px, 0.84fr) minmax(90px, 0.56fr) minmax(210px, 1.34fr);
+    grid-template-columns: minmax(220px, 1.6fr) minmax(112px, 0.72fr) minmax(250px, 1.5fr) 56px 120px 82px minmax(196px, 1.05fr);
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .app-table-head {
-    padding: 10px var(--app-table-side-pad);
-    background: #f2f7fc;
-    border-bottom: 1px solid #dce8f0;
-    border-radius: 18px 18px 0 0;
-    color: #5a7187;
-    font-size: 0.78rem;
+    padding: 9px var(--app-table-side-pad);
+    background: linear-gradient(180deg, #f7fbff 0%, #eef5fb 100%);
+    border-bottom: 1px solid #d9e6f1;
+    border-radius: 16px 16px 0 0;
+    color: #61778b;
+    font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.045em;
+    letter-spacing: 0.08em;
 }
 
 .app-table-head span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     padding: 0 var(--app-table-cell-pad);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: center;
 }
 
 .app-table-head span:nth-child(n+4) {
-    padding-left: var(--app-table-right-shift);
+    padding-left: 0;
 }
 
 .app-table-head span:nth-child(4) {
@@ -1498,7 +1504,7 @@ button.ghost {
 }
 
 .app-table-head span:nth-child(5) {
-    padding-left: 16px;
+    padding-left: 0;
 }
 
 .app-table-body {
@@ -1507,10 +1513,10 @@ button.ghost {
 }
 
 .app-table-row {
-    padding: 12px var(--app-table-side-pad);
-    border-bottom: 1px solid #e7eef5;
-    background: #fff;
-    transition: background 120ms ease;
+    padding: 10px var(--app-table-side-pad);
+    border-bottom: 1px solid #e8f0f6;
+    background: rgba(255, 255, 255, 0.88);
+    transition: background 140ms ease, box-shadow 140ms ease;
 }
 
 .app-table-row:last-child {
@@ -1518,7 +1524,8 @@ button.ghost {
 }
 
 .app-table-row:hover {
-    background: #f8fbff;
+    background: #fbfdff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .app-table-row.z-index-top {
@@ -1527,7 +1534,7 @@ button.ghost {
 }
 
 .app-table-row.busy {
-    opacity: 0.85;
+    opacity: 0.92;
 }
 
 .app-table-cell {
@@ -1539,47 +1546,86 @@ button.ghost {
     padding-left: var(--app-table-right-shift);
 }
 
+.app-table-row > :nth-child(4),
+.app-table-row > :nth-child(5),
+.app-table-row > :nth-child(6) {
+    justify-self: center;
+}
+
+.app-table-row > :nth-child(7) {
+    justify-self: end;
+}
+
 .app-status-cell {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
 }
 
 .app-name-cell {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
+}
+
+.app-name-cell .software-badge {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    border-radius: 14px;
+    font-size: 0.88rem;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .app-name-info {
     display: grid;
-    gap: 2px;
+    gap: 4px;
     min-width: 0;
 }
 
 .app-name-info strong {
-    font-size: 0.95rem;
-    color: #102033;
+    font-size: 0.93rem;
+    color: #11243a;
+    font-weight: 700;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.app-name-info span {
-    font-size: 0.82rem;
-    color: #6b8298;
+.app-version-label {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #f3f7fb;
+    border: 1px solid #dce6f0;
+    color: #607489;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
 }
 
 .app-developer {
-    font-size: 0.88rem;
-    color: #1d9b5b;
-    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 68px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: #ecfdf5;
+    border: 1px solid #cceedd;
+    color: #178a56;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
 
 .app-instructions-cell span {
-    font-size: 0.88rem;
-    color: #4b6177;
-    line-height: 1.45;
+    font-size: 0.83rem;
+    color: #4f657b;
+    line-height: 1.38;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -1589,12 +1635,12 @@ button.ghost {
 
 /* Folder button */
 .app-folder-btn {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     padding: 0;
-    background: #f0f6ff;
-    border: 1px solid #c8dcef;
-    border-radius: 8px;
+    background: #f5f9fd;
+    border: 1px solid #d4e2ee;
+    border-radius: 10px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1616,7 +1662,7 @@ button.ghost {
 }
 
 .folder-icon {
-    font-size: 1rem;
+    font-size: 0.92rem;
     line-height: 1;
 }
 
@@ -1625,19 +1671,21 @@ button.ghost {
     display: inline-flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 6px;
-    padding: 4px 10px;
-    width: 104px;
+    gap: 5px;
+    padding: 5px 10px;
+    width: auto;
+    min-width: 96px;
     border-radius: 999px;
-    font-size: 0.82rem;
+    font-size: 0.76rem;
     font-weight: 700;
     white-space: nowrap;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .app-status-pill::before {
     content: "";
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     flex: 0 0 auto;
 }
@@ -1673,7 +1721,7 @@ button.ghost {
 .app-toggle-cell {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
 }
 
 .toggle-switch {
@@ -1691,10 +1739,10 @@ button.ghost {
 }
 
 .toggle-track {
-    width: 40px;
-    height: 22px;
+    width: 36px;
+    height: 20px;
     border-radius: 999px;
-    background: #cbd5e1;
+    background: #c8d4df;
     display: flex;
     align-items: center;
     padding: 2px;
@@ -1706,8 +1754,8 @@ button.ghost {
 }
 
 .toggle-thumb {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: #fff;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
@@ -1715,24 +1763,77 @@ button.ghost {
 }
 
 .toggle-switch input:checked+.toggle-track .toggle-thumb {
-    transform: translateX(18px);
+    transform: translateX(16px);
 }
 
 /* Operate column */
 .app-operate-cell {
     display: grid;
-    gap: 6px;
+    gap: 7px;
     min-width: 0;
+    justify-items: end;
+    padding-right: 2px;
 }
 
 .app-operate-row {
     display: flex;
     flex-wrap: nowrap;
-    /* Prevent wrapping into two rows */
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.app-operate-row.install-only {
+    justify-content: flex-start;
+    width: 175px;
+    max-width: 100%;
+}
+
+.app-operate-actions {
+    display: flex;
     align-items: center;
     gap: 6px;
     min-width: 0;
-    overflow: hidden;
+    padding: 4px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #f8fbfe 0%, #eef4f8 100%);
+    border: 1px solid #dfe9f2;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.app-operate-row.install-only .app-operate-actions {
+    width: 136px;
+    justify-content: flex-start;
+}
+
+.app-operate-actions > .app-install-combo,
+.app-operate-actions > .op-btn[data-app-action="install"] {
+    flex: 1 1 auto;
+}
+
+.op-menu-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid #d7e1ea;
+    background: #ffffff;
+    color: #475569;
+    font-size: 1.05rem;
+    line-height: 1;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.op-menu-btn:hover {
+    background: #f8fbfe;
+    border-color: #c9d7e4;
+    transform: none;
 }
 
 @container app-store-table (max-width: 1120px) {
@@ -1809,42 +1910,44 @@ button.ghost {
 
 .op-btn {
     width: auto;
-    min-width: 80px;
-    /* Base width for buttons */
+    min-width: 72px;
+    min-height: 32px;
     padding: 6px 10px;
-    font-size: 0.82rem;
-    font-weight: 600;
+    font-size: 0.78rem;
+    font-weight: 700;
     white-space: nowrap;
-    border-radius: 8px;
+    border-radius: 10px;
     flex-shrink: 0;
+    box-shadow: none;
+    letter-spacing: 0.01em;
 }
 
-.app-operate-row > .op-btn:not([data-app-action="install"]) {
+.app-operate-actions > .op-btn:not([data-app-action="install"]) {
     flex: 1 1 0;
     min-width: 0;
-    padding: 6px 8px;
+    padding: 6px 9px;
 }
 
 /* Action buttons should have uniform width where possible */
 .op-btn[data-app-action="install"].alt {
-    width: 100px;
-    /* Unified with combo width */
+    width: 100%;
+    min-width: 0;
 }
 
 .op-start {
-    background: var(--teal);
+    background: linear-gradient(180deg, #158f86 0%, #11756e 100%);
+    box-shadow: 0 10px 18px rgba(17, 117, 110, 0.18);
 }
 
 .op-stop {
-    background: var(--red);
-}
-
-.op-setting {
-    background: #64748b;
+    background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 10px 18px rgba(220, 38, 38, 0.18);
 }
 
 .op-uninstall {
-    background: #94a3b8;
+    background: #ffffff;
+    color: #a11d33;
+    border: 1px solid #f0c9d0;
 }
 
 /* Install combo inside operate */
@@ -1854,24 +1957,25 @@ button.ghost {
     flex-wrap: nowrap;
     align-items: stretch;
     gap: 0;
-    width: 100px;
-    /* Increased to fit "Install..." + toggle */
+    width: 100%;
+    min-width: 0;
     flex-shrink: 0;
 }
 
 .app-install-main {
     flex: 1;
-    /* Fill the combo width */
     border-top-right-radius: 0;
     border-bottom-right-radius: 0;
     margin-right: 0;
-    padding: 6px 10px;
-    font-size: 0.82rem;
+    min-height: 32px;
+    padding: 6px 9px;
+    font-size: 0.78rem;
+    box-shadow: 0 10px 18px rgba(29, 78, 216, 0.16);
 }
 
 .app-install-toggle {
-    width: 24px;
-    min-width: 24px;
+    width: 26px;
+    min-width: 26px;
     padding: 6px 0;
     background: #1d4ed8;
     border: 0;
@@ -1885,29 +1989,29 @@ button.ghost {
 }
 
 .app-install-toggle::after {
-    content: "v";
+    content: "▾";
     position: absolute;
     inset: 0;
     display: grid;
     place-items: center;
     color: #ffffff;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     font-weight: 700;
 }
 
 .app-version-menu {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + 6px);
     left: 0;
     z-index: 20;
     min-width: 100%;
     display: grid;
-    gap: 6px;
-    padding: 8px;
+    gap: 4px;
+    padding: 6px;
     border: 1px solid #d8e4ef;
-    border-radius: 12px;
+    border-radius: 10px;
     background: #ffffff;
-    box-shadow: 0 18px 36px rgba(18, 42, 66, 0.14);
+    box-shadow: 0 14px 28px rgba(18, 42, 66, 0.12);
 }
 
 .app-version-menu[hidden] {
@@ -1916,11 +2020,11 @@ button.ghost {
 
 .app-version-option {
     width: 100%;
-    padding: 8px 10px;
+    padding: 7px 10px;
     text-align: left;
     background: #eef5ff;
     color: #1d4ed8;
-    font-size: 0.88rem;
+    font-size: 0.8rem;
     box-shadow: none;
 }
 
@@ -1936,8 +2040,8 @@ button.ghost {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
-    border-radius: 8px;
+    padding: 6px 9px;
+    border-radius: 10px;
     background: rgba(37, 99, 235, 0.08);
     border: 1px solid rgba(96, 165, 250, 0.16);
     flex: 1 1 auto;
@@ -1956,7 +2060,7 @@ button.ghost {
 
 .app-install-progress-head strong {
     color: #1d4ed8;
-    font-size: 0.88rem;
+    font-size: 0.8rem;
 }
 
 .app-install-progress-head span {
@@ -1965,7 +2069,7 @@ button.ghost {
 }
 
 .app-install-progress-track {
-    height: 6px;
+    height: 5px;
     border-radius: 999px;
     overflow: hidden;
     background: rgba(148, 163, 184, 0.24);
@@ -2384,7 +2488,7 @@ button.ghost {
 
     .app-table-head,
     .app-table-row {
-        grid-template-columns: minmax(170px, 1.5fr) minmax(84px, 0.8fr) minmax(84px, 0.8fr) minmax(170px, 1.2fr);
+        grid-template-columns: 52px 108px 64px minmax(188px, 1fr);
         gap: 8px;
     }
 
@@ -2393,10 +2497,23 @@ button.ghost {
         letter-spacing: 0.04em;
     }
 
+    .app-table-head span:nth-child(5),
+    .app-table-head span:nth-child(6),
+    .app-table-head span:nth-child(7) {
+        justify-self: end;
+        text-align: right;
+    }
+
     .app-table-cell:nth-child(2),
     .app-table-cell:nth-child(3),
     .app-table-cell:nth-child(4) {
         display: none;
+    }
+
+    .app-table-cell:nth-child(5),
+    .app-table-cell:nth-child(6),
+    .app-table-cell:nth-child(7) {
+        justify-self: end;
     }
 
     .app-table-row > :nth-child(n+4) {

@@ -616,25 +616,39 @@ func (s *appState) injectJobStatus(apps []runtimeApp) []runtimeApp {
 	defer s.appJobsMu.Unlock()
 
 	for i := range apps {
-		jobKey := apps[i].ID
 		var activeJob *appInstallJob
+		candidates := []string{
+			appInstallJobKey(apps[i].ID, apps[i].SelectedVersion),
+			appInstallJobKey(apps[i].ID, apps[i].Version),
+			appInstallJobKey(apps[i].ID, ""),
+		}
 
-		if apps[i].ID == "php" {
-			// Find any active PHP job
-			for key, job := range s.appJobs {
-				if strings.HasPrefix(key, "php:") {
-					snap := job.snapshot()
-					if snap.Status == "running" {
-						activeJob = job
-						break
-					}
+		for _, candidate := range candidates {
+			if candidate == "" {
+				continue
+			}
+			if job, ok := s.appJobs[candidate]; ok {
+				activeJob = job
+				if job.snapshot().Status == "running" {
+					break
 				}
 			}
 		}
 
-		if activeJob == nil {
-			if job, ok := s.appJobs[jobKey]; ok {
-				activeJob = job
+		if activeJob == nil || activeJob.snapshot().Status != "running" {
+			prefix := apps[i].ID + ":"
+			for key, job := range s.appJobs {
+				if !strings.HasPrefix(key, prefix) {
+					continue
+				}
+				snap := job.snapshot()
+				if snap.Status == "running" {
+					activeJob = job
+					break
+				}
+				if activeJob == nil {
+					activeJob = job
+				}
 			}
 		}
 

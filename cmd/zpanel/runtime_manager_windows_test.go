@@ -164,11 +164,11 @@ func TestConfigurePHPWritesAbsoluteExtensionDir(t *testing.T) {
 
 func TestParsePHPExtensionDirectiveOnlyAcceptsShortNames(t *testing.T) {
 	tests := map[string]string{
-		`;extension=bz2`:                                                   "bz2",
-		`;extension=curl`:                                                  "curl",
-		`;extension=ffi`:                                                   "ffi",
-		`;extension=ftp`:                                                   "ftp",
-		`;extension=fileinfo`:                                              "fileinfo",
+		`;extension=bz2`:      "bz2",
+		`;extension=curl`:     "curl",
+		`;extension=ffi`:      "ffi",
+		`;extension=ftp`:      "ftp",
+		`;extension=fileinfo`: "fileinfo",
 		`;extension=exif      ; Must be after mbstring as it depends on it`: "exif",
 	}
 
@@ -515,6 +515,42 @@ func TestInstallMetadataIsRemovedOnUninstall(t *testing.T) {
 
 	if _, err := os.Stat(manager.installedVersionsPath()); !os.IsNotExist(err) {
 		t.Fatalf("expected metadata file removed, got err=%v", err)
+	}
+}
+
+func TestListAppsUsesApacheVersionMetadata(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	if err := os.MkdirAll(filepath.Dir(manager.apacheExe()), 0o755); err != nil {
+		t.Fatalf("mkdir apache exe dir: %v", err)
+	}
+	if err := os.WriteFile(manager.apacheExe(), []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write apache exe: %v", err)
+	}
+	if err := manager.saveInstalledVersionsMetadata(installedRuntimeVersions{"apache": "2.4.65"}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+
+	apps := manager.listApps()
+
+	var apacheApp runtimeApp
+	found := false
+	for _, app := range apps {
+		if app.ID == "apache" {
+			apacheApp = app
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("apache app not found")
+	}
+	if apacheApp.Version != "2.4.65" {
+		t.Fatalf("expected apache version 2.4.65, got %s", apacheApp.Version)
+	}
+	if !manager.appInstalled("apache:2.4.65") {
+		t.Fatal("expected apache version lookup to honor installed metadata")
 	}
 }
 

@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -79,6 +80,8 @@ type runtimeSelection struct {
 	PHP    runtimeRelease
 	MySQL  runtimeRelease
 }
+
+type installedRuntimeVersions map[string]string
 
 func newRuntimeManager(projectRoot string) runtimeManager {
 	return &windowsRuntimeManager{projectRoot: projectRoot}
@@ -346,6 +349,9 @@ func (m *windowsRuntimeManager) appInstalled(appID string) bool {
 
 	switch baseID {
 	case "apache":
+		if version != "" {
+			return fileExists(m.apacheExe()) && strings.TrimSpace(m.installedVersionFromMetadata("apache")) == version
+		}
 		return fileExists(m.apacheExe())
 	case "php":
 		if version == "" {
@@ -356,6 +362,9 @@ func (m *windowsRuntimeManager) appInstalled(appID string) bool {
 		}
 		return fileExists(m.phpExe(version))
 	case "mysql":
+		if version != "" {
+			return fileExists(m.mysqlExe()) && strings.TrimSpace(m.installedVersionFromMetadata("mysql")) == version
+		}
 		return fileExists(m.mysqlExe())
 	default:
 		return false
@@ -447,6 +456,8 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	mysqlReleases := appStoreEffectiveReleases(m.projectRoot, "mysql")
 	apacheInstalled := fileExists(m.apacheExe())
 	mysqlInstalled := fileExists(m.mysqlExe())
+	apacheVersion := versionOrDefault(m.installedVersionFromMetadata("apache"), apacheReleases[0].Version)
+	mysqlVersion := versionOrDefault(m.installedVersionFromMetadata("mysql"), mysqlReleases[0].Version)
 
 	var apacheRunning, mysqlRunning bool
 	var wg sync.WaitGroup
@@ -478,7 +489,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	}
 
 	apps := []runtimeApp{
-		newRuntimeApp("apache", "Apache", versionOrDefault(installedApacheVersion(m.apacheRoot()), apacheReleases[0].Version), availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, "8081", "http://127.0.0.1:8081/", releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
+		newRuntimeApp("apache", "Apache", apacheVersion, availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, "8081", "http://127.0.0.1:8081/", releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
 	}
 
 	// Detect all installed PHP versions
@@ -504,7 +515,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	phpApp.RunningVersions = runningPHPs
 	apps = append(apps, phpApp)
 
-	apps = append(apps, newRuntimeApp("mysql", "MySQL", versionOrDefault(installedMySQLVersion(m.mysqlRoot()), mysqlReleases[0].Version), availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled))
+	apps = append(apps, newRuntimeApp("mysql", "MySQL", mysqlVersion, availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled))
 
 	return apps
 }
@@ -551,12 +562,12 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 		}
 	}
 
-	if plan.needApache && shouldReplaceRuntime(installedApacheVersion(m.apacheRoot()), selection.Apache.Version, fileExists(m.apacheExe())) {
+	if plan.needApache && shouldReplaceRuntime(m.installedVersionFromMetadata("apache"), selection.Apache.Version, fileExists(m.apacheExe())) {
 		if err := m.uninstallApache(); err != nil {
 			return err
 		}
 	}
-	if plan.needMySQL && shouldReplaceRuntime(installedMySQLVersion(m.mysqlRoot()), selection.MySQL.Version, fileExists(m.mysqlExe())) {
+	if plan.needMySQL && shouldReplaceRuntime(m.installedVersionFromMetadata("mysql"), selection.MySQL.Version, fileExists(m.mysqlExe())) {
 		if err := m.uninstallMySQL(); err != nil {
 			return err
 		}
@@ -616,7 +627,7 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 			return err
 		}
 	}
-	return m.removeInstalledVersionsMetadata()
+	return m.recordInstalledVersions(plan, selection)
 }
 
 func availableVersions(releases []runtimeRelease) []string {
@@ -701,11 +712,109 @@ func (m *windowsRuntimeManager) installedVersionsPath() string {
 	return filepath.Join(m.paths().runtimeRoot, "installed-versions.json")
 }
 
-func (m *windowsRuntimeManager) removeInstalledVersionsMetadata() error {
-	if err := os.Remove(m.installedVersionsPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+func (m *windowsRuntimeManager) loadInstalledVersionsMetadata() installedRuntimeVersions {
+	content, err := os.ReadFile(m.installedVersionsPath())
+	if err != nil {
+		return installedRuntimeVersions{}
+	}
+
+	var metadata installedRuntimeVersions
+	if err := json.Unmarshal(content, &metadata); err != nil {
+		return installedRuntimeVersions{}
+	}
+	if metadata == nil {
+		return installedRuntimeVersions{}
+	}
+	return metadata
+}
+
+func (m *windowsRuntimeManager) saveInstalledVersionsMetadata(metadata installedRuntimeVersions) error {
+	cleaned := installedRuntimeVersions{}
+	for appID, version := range metadata {
+		appID = strings.ToLower(strings.TrimSpace(appID))
+		version = strings.TrimSpace(version)
+		if appID == "" || version == "" {
+			continue
+		}
+		cleaned[appID] = version
+	}
+
+	if len(cleaned) == 0 {
+		if err := os.Remove(m.installedVersionsPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(m.installedVersionsPath()), 0o755); err != nil {
 		return err
 	}
-	return nil
+
+	content, err := json.Marshal(cleaned)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.installedVersionsPath(), content, 0o644)
+}
+
+func (m *windowsRuntimeManager) updateInstalledVersionsMetadata(update func(installedRuntimeVersions)) error {
+	metadata := m.loadInstalledVersionsMetadata()
+	if metadata == nil {
+		metadata = installedRuntimeVersions{}
+	}
+	update(metadata)
+	return m.saveInstalledVersionsMetadata(metadata)
+}
+
+func (m *windowsRuntimeManager) installedVersionFromMetadata(appID string) string {
+	appID = strings.ToLower(strings.TrimSpace(appID))
+	version := strings.TrimSpace(m.loadInstalledVersionsMetadata()[appID])
+	if version == "" {
+		return ""
+	}
+	switch appID {
+	case "apache":
+		if !fileExists(m.apacheExe()) {
+			return ""
+		}
+	case "mysql":
+		if !fileExists(m.mysqlExe()) {
+			return ""
+		}
+	}
+	return version
+}
+
+func (m *windowsRuntimeManager) recordInstalledVersions(plan runtimeInstallPlan, selection runtimeSelection) error {
+	return m.updateInstalledVersionsMetadata(func(metadata installedRuntimeVersions) {
+		for key := range metadata {
+			if key == "php" || strings.HasPrefix(key, "php:") {
+				delete(metadata, key)
+			}
+		}
+		if plan.needApache && fileExists(m.apacheExe()) {
+			metadata["apache"] = strings.TrimSpace(selection.Apache.Version)
+		}
+		if plan.needMySQL && fileExists(m.mysqlExe()) {
+			metadata["mysql"] = strings.TrimSpace(selection.MySQL.Version)
+		}
+	})
+}
+
+func (m *windowsRuntimeManager) removeInstalledVersion(appID string) error {
+	return m.updateInstalledVersionsMetadata(func(metadata installedRuntimeVersions) {
+		delete(metadata, strings.ToLower(strings.TrimSpace(appID)))
+	})
+}
+
+func (m *windowsRuntimeManager) removeLegacyPHPInstalledVersionsMetadata() error {
+	return m.updateInstalledVersionsMetadata(func(metadata installedRuntimeVersions) {
+		for key := range metadata {
+			if key == "php" || strings.HasPrefix(key, "php:") {
+				delete(metadata, key)
+			}
+		}
+	})
 }
 
 func (m *windowsRuntimeManager) ensureApacheLandingPage() error {
@@ -1229,7 +1338,7 @@ func (m *windowsRuntimeManager) uninstallApache() error {
 	paths := m.paths()
 	_ = os.RemoveAll(paths.apacheExtractDir)
 	_ = os.Remove(paths.apacheZip)
-	_ = m.removeInstalledVersionsMetadata()
+	_ = m.removeInstalledVersion("apache")
 	return nil
 }
 
@@ -1253,7 +1362,7 @@ func (m *windowsRuntimeManager) uninstallPHP(version string) error {
 	if archivePath := phpArchivePath(paths, version); archivePath != "" {
 		_ = os.Remove(archivePath)
 	}
-	_ = m.removeInstalledVersionsMetadata()
+	_ = m.removeLegacyPHPInstalledVersionsMetadata()
 
 	if fileExists(m.httpdConfPath()) {
 		nextVersion := m.currentPHPVersion()
@@ -1275,7 +1384,7 @@ func (m *windowsRuntimeManager) uninstallMySQL() error {
 	_ = os.RemoveAll(paths.mysqlTempDir)
 	_ = os.Remove(paths.myIniPath)
 	_ = os.Remove(paths.mysqlZip)
-	_ = m.removeInstalledVersionsMetadata()
+	_ = m.removeInstalledVersion("mysql")
 	return nil
 }
 

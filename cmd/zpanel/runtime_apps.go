@@ -15,33 +15,33 @@ import (
 )
 
 type runtimeApp struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Version           string   `json:"version"`
-	SelectedVersion   string   `json:"selected_version,omitempty"`
-	AvailableVersions []string `json:"available_versions,omitempty"`
-	VersionTitles     map[string]string `json:"version_titles,omitempty"`
-	InstalledVersions []string `json:"installed_versions,omitempty"`
-	RunningVersions   []string `json:"running_versions,omitempty"`
-	Description       string          `json:"description"`
-	Developer         string          `json:"developer"`
-	InstallPath       string          `json:"install_path,omitempty"`
-	ShowOnDashboard   bool            `json:"show_on_dashboard"`
-	ShowOnDashboardVersions map[string]bool `json:"show_on_dashboard_versions,omitempty"`
-	Status            string          `json:"status"`
-	StatusLabel       string   `json:"status_label"`
-	Installed         bool     `json:"installed"`
-	Running           bool     `json:"running"`
-	Port              string   `json:"port,omitempty"`
-	Progress          int      `json:"progress,omitempty"`
-	URL               string            `json:"url,omitempty"`
-	DownloadURL       string            `json:"download_url,omitempty"`
-	DownloadURLs      map[string]string `json:"download_urls,omitempty"`
-	CanInstall        bool              `json:"can_install"`
-	CanStart          bool              `json:"can_start"`
-	CanStop           bool              `json:"can_stop"`
-	CanOpen           bool              `json:"can_open"`
-	CanUninstall      bool              `json:"can_uninstall"`
+	ID                      string            `json:"id"`
+	Name                    string            `json:"name"`
+	Version                 string            `json:"version"`
+	SelectedVersion         string            `json:"selected_version,omitempty"`
+	AvailableVersions       []string          `json:"available_versions,omitempty"`
+	VersionTitles           map[string]string `json:"version_titles,omitempty"`
+	InstalledVersions       []string          `json:"installed_versions,omitempty"`
+	RunningVersions         []string          `json:"running_versions,omitempty"`
+	Description             string            `json:"description"`
+	Developer               string            `json:"developer"`
+	InstallPath             string            `json:"install_path,omitempty"`
+	ShowOnDashboard         bool              `json:"show_on_dashboard"`
+	ShowOnDashboardVersions map[string]bool   `json:"show_on_dashboard_versions,omitempty"`
+	Status                  string            `json:"status"`
+	StatusLabel             string            `json:"status_label"`
+	Installed               bool              `json:"installed"`
+	Running                 bool              `json:"running"`
+	Port                    string            `json:"port,omitempty"`
+	Progress                int               `json:"progress,omitempty"`
+	URL                     string            `json:"url,omitempty"`
+	DownloadURL             string            `json:"download_url,omitempty"`
+	DownloadURLs            map[string]string `json:"download_urls,omitempty"`
+	CanInstall              bool              `json:"can_install"`
+	CanStart                bool              `json:"can_start"`
+	CanStop                 bool              `json:"can_stop"`
+	CanOpen                 bool              `json:"can_open"`
+	CanUninstall            bool              `json:"can_uninstall"`
 }
 
 type runtimeAppsResponse struct {
@@ -105,6 +105,25 @@ func newAppInstallJob(appID string, version string, action string) *appInstallJo
 		Progress: 2,
 		Message:  "Preparing install...",
 	}
+}
+
+func appInstallJobKey(appID string, version string) string {
+	appID = strings.ToLower(strings.TrimSpace(appID))
+	version = strings.TrimSpace(version)
+	if appID == "" {
+		return ""
+	}
+	if strings.Contains(appID, ":") {
+		parts := strings.SplitN(appID, ":", 2)
+		appID = parts[0]
+		if version == "" && len(parts) == 2 {
+			version = strings.TrimSpace(parts[1])
+		}
+	}
+	if version == "" {
+		return appID
+	}
+	return appID + ":" + version
 }
 
 func (j *appInstallJob) snapshot() appInstallJobSnapshot {
@@ -282,10 +301,7 @@ func (s *appState) startOrGetInstallJob(appID string, version string) *appInstal
 	s.appJobsMu.Lock()
 	defer s.appJobsMu.Unlock()
 
-	jobKey := appID
-	if appID == "php" && version != "" {
-		jobKey = appID + ":" + version
-	}
+	jobKey := appInstallJobKey(appID, version)
 
 	if existing := s.appJobs[jobKey]; existing != nil {
 		snapshot := existing.snapshot()
@@ -305,10 +321,7 @@ func (s *appState) getInstallJob(appID string, version string) *appInstallJob {
 	s.appJobsMu.Lock()
 	defer s.appJobsMu.Unlock()
 
-	jobKey := appID
-	if appID == "php" && version != "" {
-		jobKey = appID + ":" + version
-	}
+	jobKey := appInstallJobKey(appID, version)
 	return s.appJobs[jobKey]
 }
 

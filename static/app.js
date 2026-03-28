@@ -94,6 +94,13 @@ function escapeHTML(value) {
         .replace(/'/g, "&#39;");
 }
 
+function setTextContent(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.textContent = value;
+    }
+}
+
 const viewConfig = {
     overview: {
         title: "Overview",
@@ -185,21 +192,21 @@ function setPanelOfflineState(error) {
     const message = error?.message || "Failed to fetch";
     connectionState = "offline";
     showConnectionError(error);
-    document.getElementById("resource-system-label").textContent = "Panel offline";
-    document.getElementById("resource-uptime").textContent = "Waiting for service";
-    document.getElementById("website-count").textContent = "-";
-    document.getElementById("ftp-count").textContent = "-";
-    document.getElementById("database-count").textContent = "-";
-    document.getElementById("cpu-usage").textContent = "-";
-    document.getElementById("ram-usage").textContent = "-";
-    document.getElementById("ram-copy").textContent = "Panel is not connected";
-    document.getElementById("software-status-apache").textContent = "Unavailable";
-    document.getElementById("software-status-php").textContent = "Unavailable";
-    document.getElementById("software-status-mysql").textContent = "Unavailable";
-    document.getElementById("upload-speed").textContent = "-";
-    document.getElementById("download-speed").textContent = "-";
-    document.getElementById("total-sent").textContent = "-";
-    document.getElementById("total-received").textContent = "-";
+    setTextContent("resource-system-label", "Panel offline");
+    setTextContent("resource-uptime", "Waiting for service");
+    setTextContent("website-count", "-");
+    setTextContent("ftp-count", "-");
+    setTextContent("database-count", "-");
+    setTextContent("cpu-usage", "-");
+    setTextContent("ram-usage", "-");
+    setTextContent("ram-copy", "Panel is not connected");
+    setTextContent("software-status-apache", "Unavailable");
+    setTextContent("software-status-php", "Unavailable");
+    setTextContent("software-status-mysql", "Unavailable");
+    setTextContent("upload-speed", "-");
+    setTextContent("download-speed", "-");
+    setTextContent("total-sent", "-");
+    setTextContent("total-received", "-");
     databaseListEl.replaceChildren();
     appStoreListEl.replaceChildren();
     renderCachedWebsites();
@@ -439,6 +446,7 @@ function websiteCard(website) {
     const websiteName = websiteUrl
         ? `<a class="website-domain-link" href="${websiteUrl}" target="_blank" rel="noreferrer">${website.domain}</a>`
         : `<span class="website-domain-link disabled">${website.domain}</span>`;
+
     wrapper.innerHTML = `
         <div class="website-check">
             <input type="checkbox" aria-label="Select ${website.domain}" />
@@ -493,7 +501,7 @@ function appStoreRow(app) {
     const dashboardToggleId = app._rowVersion
         ? (String(app.id || "").includes(":") ? app.id : `${app.id}:${app._rowVersion}`)
         : app.id;
-    const jobKey = app.id === "php" ? `${app.id}:${displayVersion}` : app.id;
+    const jobKey = getInstallJobKey(app.id, displayVersion);
     const installJob = appInstallJobs.get(jobKey);
 
     const badgeClass = app.id === "apache"
@@ -502,24 +510,26 @@ function appStoreRow(app) {
             ? "php-badge"
             : "mysql-badge";
     const badgeLabel = app.id.startsWith("php") ? "PHP" : app.id === "mysql" ? "MY" : "AP";
+    const operateRowClass = app.installed ? "app-operate-row" : "app-operate-row install-only";
 
     const statusClass = app.status === "running" ? "running" : app.status === "stopped" ? "stopped" : "not-installed";
     const statusLabel = app.status_label || "Not installed";
 
     // --- Operate buttons: install OR uninstall, never both ---
     let operateBtns = "";
+    let operateMenuBtn = "";
     if (app.installed) {
-        // Installed: show Start/Stop + Setting + Uninstall only
+        // Installed: show Start/Stop + Uninstall + Settings menu trigger
         const startStopBtn = app.can_start
             ? `<button class="op-btn op-start" data-app-action="start" data-app-id="${app.id}">Start</button>`
             : app.can_stop
                 ? `<button class="op-btn op-stop warn" data-app-action="stop" data-app-id="${app.id}">Stop</button>`
                 : "";
-        const settingBtn = `<button class="op-btn op-setting" data-app-action="setting" data-app-id="${app.id}" data-app-version="${app._rowVersion || ""}">Setting</button>`;
         const uninstallBtn = app.can_uninstall
             ? `<button class="op-btn op-uninstall" data-app-action="uninstall" data-app-id="${app.id}">Uninstall</button>`
             : "";
-        operateBtns = startStopBtn + settingBtn + uninstallBtn;
+        operateBtns = startStopBtn + uninstallBtn;
+        operateMenuBtn = `<button class="op-menu-btn" data-app-action="setting" data-app-id="${app.id}" data-app-version="${app._rowVersion || ""}" aria-label="Open settings" title="Settings">&#8942;</button>`;
     } else {
         // Not installed: show Install combo only
         const installVersion = displayVersion || "";
@@ -576,8 +586,11 @@ function appStoreRow(app) {
             </label>
         </div>
         <div class="app-table-cell app-operate-cell">
-            <div class="app-operate-row">
-                ${operateBtns}
+            <div class="${operateRowClass}">
+                <div class="app-operate-actions">
+                    ${operateBtns}
+                </div>
+                ${operateMenuBtn}
                 ${(installJob && (!app._rowVersion || String(installJob.version) === String(app._rowVersion))) ? `
                     <div class="app-install-progress">
                         <div class="app-install-progress-head">
@@ -755,7 +768,19 @@ function renderApps(apps) {
 }
 
 function getInstallJobKey(id, version = "") {
-    return id === "php" ? `${id}:${version}` : id;
+    let appId = String(id || "").trim();
+    let appVersion = String(version || "").trim();
+    if (!appId) {
+        return "";
+    }
+    if (appId.includes(":")) {
+        const [baseId, embeddedVersion = ""] = appId.split(":", 2);
+        appId = baseId;
+        if (!appVersion) {
+            appVersion = embeddedVersion.trim();
+        }
+    }
+    return appVersion ? `${appId}:${appVersion}` : appId;
 }
 
 function syncRunningInstallJobs(apps) {
@@ -768,7 +793,7 @@ function syncRunningInstallJobs(apps) {
 
         const version = app.id === "php"
             ? String(app.selected_version || app.version || "").trim()
-            : "";
+            : String(app.selected_version || app.version || "").trim();
         const jobKey = getInstallJobKey(app.id, version);
 
         if (!appInstallJobs.has(jobKey)) {
@@ -1055,7 +1080,7 @@ async function startInstallJob(id, version = "") {
         body: JSON.stringify({ action: "install", id, version }),
     });
 
-    const jobKey = id === "php" ? `${id}:${version}` : id;
+    const jobKey = getInstallJobKey(id, version);
     syncInstallJob(job, jobKey);
     renderApps(latestAppsPayload);
     pollInstallJob(id, version);
