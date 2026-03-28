@@ -1,8 +1,22 @@
-# zPanel
+<div align="center">
+  <img src="assets/screenshot.png" alt="zPanel Interface" width="100%" loading="lazy">
+</div>
 
-zPanel is a portable WAMP (Windows, Apache, MySQL, PHP) stack manager for Windows. It provides a simple GUI and API to manage local development environments with ease.
+# zPanel (WAMP Stack Manager)
 
-## Features
+**zPanel** is a next-generation, fully portable WAMP (Windows, Apache, MySQL, PHP) stack manager for Windows. Designed with an elegant, modern GUI, it enables developers to seamlessly install, manage, and monitor their local web development environments with ease.
+
+## 📖 About ZPanel
+
+Setting up a local web server environment shouldn't require complex configurations or bloated software. **zPanel** is built on top of Go to provide a blazing-fast, lightweight, and single-executable solution. It completely eliminates friction by handling the downloading and configuration of portable runtimes (Apache/MySQL/PHP), enabling you to immediately focus on building apps.
+
+### Highlights:
+- 🚀 **Zero Installation**: Download, double click, and you're running.
+- 🌐 **Clean & Intuitive GUI**: A sleek modern web-based dashboard.
+- 🛠 **Automated Configuration**: zPanel handles internal configuration paths automatically.
+- 🔌 **Dynamic Routing**: Instant web proxy mapping to local folders.
+
+## ✨ Features
 
 - **Portable Runtime**: Downloads and configures portable versions of Apache, MySQL, and PHP.
 - **Service Management**: Easily start, stop, and restart web services.
