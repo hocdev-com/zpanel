@@ -3007,3 +3007,9 @@ button.ghost {
         height: 40px;
     }
 }
+
+/* UI Overrides: Header Icon & Typography */
+.brand h1 { font-size: 1.35rem !important; }
+.brand p { font-size: 0.8rem !important; margin-top: 2px; }
+.brand-badge svg { opacity: 0.95; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
+
