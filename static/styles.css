@@ -1466,7 +1466,7 @@ button.ghost {
 .app-table-head,
 .app-table-row {
     display: grid;
-    grid-template-columns: minmax(220px, 1.6fr) minmax(112px, 0.72fr) minmax(250px, 1.5fr) 56px 120px 82px minmax(196px, 1.05fr);
+    grid-template-columns: minmax(210px, 1.42fr) minmax(96px, 0.58fr) minmax(320px, 2.08fr) 56px 120px 82px minmax(196px, 1.02fr);
     align-items: center;
     gap: 10px;
 }
@@ -1505,6 +1505,12 @@ button.ghost {
 
 .app-table-head span:nth-child(5) {
     padding-left: 0;
+}
+
+.app-table-head span:nth-child(7),
+.app-table-row > :nth-child(7) {
+    padding-left: 0;
+    padding-right: 0;
 }
 
 .app-table-body {
@@ -1622,6 +1628,10 @@ button.ghost {
     text-transform: uppercase;
 }
 
+.app-instructions-cell {
+    width: 100%;
+}
+
 .app-instructions-cell span {
     font-size: 0.77rem;
     color: #4f657b;
@@ -1630,6 +1640,8 @@ button.ghost {
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
+    width: 100%;
+    max-width: none;
     overflow: hidden;
 }
 
@@ -1769,36 +1781,45 @@ button.ghost {
 /* Operate column */
 .app-operate-cell {
     --operate-main-width: 150px;
-    --operate-menu-width: 32px;
-    --operate-gap: 7px;
+    --operate-menu-width: 28px;
+    --operate-gap: 4px;
+    --operate-start-width: 56px;
+    --operate-uninstall-width: 92px;
+    --operate-btn-pad-x: 9px;
+    --operate-btn-font-size: 0.72rem;
+    --operate-row-width: calc(var(--operate-main-width) + var(--operate-gap) + var(--operate-menu-width));
     display: grid;
     gap: 7px;
     min-width: 0;
-    justify-items: end;
-    padding-right: 2px;
+    width: 100%;
+    max-width: var(--operate-row-width);
+    justify-self: end;
+    justify-items: stretch;
+    padding-right: 0;
 }
 
 .app-operate-row {
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    justify-content: flex-end;
-    gap: 7px;
+    justify-content: flex-start;
+    gap: var(--operate-gap);
     width: 100%;
+    max-width: var(--operate-row-width);
     min-width: 0;
     overflow: hidden;
 }
 
 .app-operate-row.install-only {
-    justify-content: flex-start;
-    width: calc(var(--operate-main-width) + var(--operate-gap) + var(--operate-menu-width));
-    max-width: 100%;
+    width: 100%;
+    max-width: var(--operate-row-width);
 }
 
 .app-operate-actions {
     display: flex;
     align-items: center;
     gap: 6px;
+    box-sizing: border-box;
     min-width: 0;
     padding: 0;
     border-radius: 0;
@@ -1818,9 +1839,10 @@ button.ghost {
 }
 
 .op-menu-btn {
-    width: 32px;
+    width: var(--operate-menu-width);
     height: 32px;
     padding: 0;
+    box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1849,7 +1871,7 @@ button.ghost {
 
     .app-table-head,
     .app-table-row {
-        grid-template-columns: minmax(160px, 1.45fr) minmax(150px, 2fr) 96px 78px minmax(180px, 1.25fr);
+        grid-template-columns: minmax(150px, 1.28fr) minmax(132px, 1.6fr) 90px 72px minmax(172px, 1.34fr);
         gap: 10px;
     }
 
@@ -1862,9 +1884,28 @@ button.ghost {
     .app-table-head span:nth-child(n+4) {
         padding-left: 0;
     }
+
+    .app-operate-cell {
+        --operate-main-width: 158px;
+        --operate-menu-width: 22px;
+        --operate-gap: 3px;
+        --operate-start-width: 48px;
+        --operate-uninstall-width: 92px;
+        --operate-btn-pad-x: 6px;
+        --operate-btn-font-size: 0.69rem;
+    }
+
+    .app-operate-actions {
+        gap: 4px;
+    }
+
+    .op-menu-btn {
+        font-size: 0.88rem;
+    }
+
 }
 
-@container app-store-table (max-width: 860px) {
+@container app-store-table (max-width: 980px) {
     .app-table-head span:nth-child(2),
     .app-table-head span:nth-child(3),
     .app-table-head span:nth-child(4),
@@ -1876,17 +1917,41 @@ button.ghost {
 
     .app-table-head,
     .app-table-row {
-        grid-template-columns: minmax(170px, 1.5fr) 104px 84px minmax(170px, 1.15fr);
+        grid-template-columns: minmax(160px, 1.24fr) 112px 72px minmax(188px, 1.34fr);
         gap: 8px;
     }
 
     .app-table-head {
-        font-size: 0.74rem;
+        font-size: 0.7rem;
         letter-spacing: 0.04em;
+    }
+
+    .app-name-info strong {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .app-operate-cell {
+        --operate-main-width: 160px;
+        --operate-menu-width: 20px;
+        --operate-gap: 2px;
+        --operate-start-width: 46px;
+        --operate-uninstall-width: 92px;
+        --operate-btn-pad-x: 6px;
+        --operate-btn-font-size: 0.68rem;
+    }
+
+    .app-operate-actions {
+        gap: 4px;
+    }
+
+    .op-menu-btn {
+        font-size: 0.84rem;
     }
 }
 
-@container app-store-table (max-width: 620px) {
+@container app-store-table (max-width: 440px) {
     .app-table-head span:nth-child(5),
     .app-table-head span:nth-child(6),
     .app-table-cell:nth-child(5),
@@ -1916,6 +1981,10 @@ button.ghost {
     min-width: 72px;
     min-height: 32px;
     padding: 6px 10px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
@@ -1926,9 +1995,20 @@ button.ghost {
 }
 
 .app-operate-actions > .op-btn:not([data-app-action="install"]) {
-    flex: 1 1 0;
     min-width: 0;
-    padding: 6px 9px;
+    padding: 6px var(--operate-btn-pad-x);
+    font-size: var(--operate-btn-font-size);
+}
+
+.app-operate-actions > .op-start,
+.app-operate-actions > .op-stop {
+    flex: 0 0 var(--operate-start-width);
+    min-width: var(--operate-start-width);
+}
+
+.app-operate-actions > .op-uninstall {
+    flex: 0 0 var(--operate-uninstall-width);
+    min-width: var(--operate-uninstall-width);
 }
 
 /* Action buttons should have uniform width where possible */
@@ -1972,6 +2052,7 @@ button.ghost {
     margin-right: 0;
     min-height: 32px;
     padding: 6px 9px;
+    box-sizing: border-box;
     font-size: 0.78rem;
     box-shadow: none;
 }
@@ -1980,6 +2061,7 @@ button.ghost {
     width: 26px;
     min-width: 26px;
     padding: 6px 0;
+    box-sizing: border-box;
     background: #1d4ed8;
     border: 0;
     border-top-left-radius: 0;
@@ -2058,6 +2140,7 @@ button.ghost {
     border: 1px solid rgba(96, 165, 250, 0.16);
     flex: 1 1 auto;
     min-width: 0;
+    width: min(100%, var(--operate-row-width));
     max-width: 100%;
     margin-left: 0;
     overflow: hidden;
@@ -2380,30 +2463,6 @@ button.ghost {
     stroke-linejoin: round;
 }
 
-@media (max-width: 1340px) {
-    .app-table-head span:nth-child(2),
-    .app-table-head span:nth-child(4),
-    .app-table-cell:nth-child(2),
-    .app-table-cell:nth-child(4) {
-        display: none;
-    }
-
-    .app-table-head,
-    .app-table-row {
-        grid-template-columns: minmax(120px, 1.45fr) minmax(150px, 2.35fr) 92px 74px minmax(140px, 1.45fr);
-        gap: 12px;
-    }
-
-    .app-table-head {
-        font-size: 0.76rem;
-        letter-spacing: 0.04em;
-    }
-
-    .app-table-head span:nth-child(5) {
-        padding-left: 18px;
-    }
-}
-
 @media (max-width: 980px) {
     .toast-stack {
         left: 50vw;
@@ -2491,49 +2550,8 @@ button.ghost {
     .website-table-head span:nth-child(6),
     .website-table-head span:nth-child(7),
     .website-table-head span:nth-child(8),
-    .website-table-head span:nth-child(9),
-    .app-table-head span:nth-child(2),
-    .app-table-head span:nth-child(3),
-    .app-table-head span:nth-child(4) {
+    .website-table-head span:nth-child(9) {
         display: none;
-    }
-
-    .app-table-head,
-    .app-table-row {
-        grid-template-columns: 52px 108px 64px minmax(188px, 1fr);
-        gap: 8px;
-    }
-
-    .app-table-head {
-        font-size: 0.68rem;
-        letter-spacing: 0.04em;
-    }
-
-    .app-table-head span:nth-child(5),
-    .app-table-head span:nth-child(6),
-    .app-table-head span:nth-child(7) {
-        justify-self: end;
-        text-align: right;
-    }
-
-    .app-table-cell:nth-child(2),
-    .app-table-cell:nth-child(3),
-    .app-table-cell:nth-child(4) {
-        display: none;
-    }
-
-    .app-table-cell:nth-child(5),
-    .app-table-cell:nth-child(6),
-    .app-table-cell:nth-child(7) {
-        justify-self: end;
-    }
-
-    .app-table-row > :nth-child(n+4) {
-        padding-left: 0;
-    }
-
-    .app-table-head span:nth-child(n+4) {
-        padding-left: 0;
     }
 
     .website-row> :nth-child(6),
@@ -2610,30 +2628,6 @@ button.ghost {
     .overview-grid,
     .form-grid {
         grid-template-columns: 1fr;
-    }
-
-    /* App Store Mobile */
-    .app-table-head span:nth-child(5),
-    .app-table-head span:nth-child(6),
-    .app-table-cell:nth-child(5),
-    .app-table-cell:nth-child(6) {
-        display: none;
-    }
-
-    .app-table-head,
-    .app-table-row {
-        grid-template-columns: 1fr auto;
-        gap: 10px;
-    }
-
-    .app-table-cell {
-        padding: 0 4px;
-    }
-
-    .app-name-info strong {
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
     }
 
     .panel,
