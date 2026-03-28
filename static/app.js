@@ -529,7 +529,7 @@ function appStoreRow(app) {
             ? `<button class="op-btn op-uninstall" data-app-action="uninstall" data-app-id="${app.id}">Uninstall</button>`
             : "";
         operateBtns = startStopBtn + uninstallBtn;
-        operateMenuBtn = `<button class="op-menu-btn" data-app-action="setting" data-app-id="${app.id}" data-app-version="${app._rowVersion || ""}" aria-label="Open settings" title="Settings">&#8942;</button>`;
+        operateMenuBtn = `<button class="op-menu-btn" data-app-action="setting" data-app-id="${app.id}" data-app-version="${app._rowVersion || ""}" aria-label="Open settings" title="Settings"><span class="op-menu-dots" aria-hidden="true"></span></button>`;
     } else {
         // Not installed: show Install combo only
         const installVersion = displayVersion || "";

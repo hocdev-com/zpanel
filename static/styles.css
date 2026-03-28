@@ -1780,45 +1780,47 @@ button.ghost {
 
 /* Operate column */
 .app-operate-cell {
-    --operate-main-width: 150px;
-    --operate-menu-width: 28px;
-    --operate-gap: 4px;
     --operate-start-width: 56px;
     --operate-uninstall-width: 92px;
+    --operate-actions-gap: 6px;
+    --operate-main-width: calc(var(--operate-start-width) + var(--operate-uninstall-width) + var(--operate-actions-gap));
+    --operate-menu-width: 14px;
+    --operate-menu-gap: 6px;
     --operate-btn-pad-x: 9px;
     --operate-btn-font-size: 0.72rem;
-    --operate-row-width: calc(var(--operate-main-width) + var(--operate-gap) + var(--operate-menu-width));
+    --operate-row-width: calc(var(--operate-main-width) + var(--operate-menu-gap) + var(--operate-menu-width));
     display: grid;
     gap: 7px;
     min-width: 0;
     width: 100%;
     max-width: var(--operate-row-width);
+    box-sizing: border-box;
     justify-self: end;
     justify-items: stretch;
-    padding-right: 0;
+    padding-inline: 0;
 }
 
 .app-operate-row {
-    display: flex;
-    flex-wrap: nowrap;
+    display: inline-flex;
     align-items: center;
-    justify-content: flex-start;
-    gap: var(--operate-gap);
-    width: 100%;
-    max-width: var(--operate-row-width);
+    gap: var(--operate-menu-gap);
+    width: auto;
+    max-width: 100%;
     min-width: 0;
     overflow: hidden;
+    justify-self: end;
 }
 
 .app-operate-row.install-only {
-    width: 100%;
-    max-width: var(--operate-row-width);
+    width: var(--operate-row-width);
+    max-width: 100%;
 }
 
 .app-operate-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: flex-start;
+    gap: var(--operate-actions-gap);
     box-sizing: border-box;
     min-width: 0;
     padding: 0;
@@ -1827,6 +1829,7 @@ button.ghost {
     border: 0;
     box-shadow: none;
     width: var(--operate-main-width);
+    max-width: var(--operate-main-width);
 }
 
 .app-operate-row.install-only .app-operate-actions {
@@ -1850,9 +1853,39 @@ button.ghost {
     border: 0;
     background: transparent;
     color: #475569;
-    font-size: 0.99rem;
+    font-size: 0.9rem;
     line-height: 1;
     box-shadow: none;
+    justify-self: end;
+}
+
+.op-menu-dots {
+    position: relative;
+    display: block;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: 0 0 auto;
+}
+
+.op-menu-dots::before,
+.op-menu-dots::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.op-menu-dots::before {
+    top: -5px;
+}
+
+.op-menu-dots::after {
+    top: 5px;
 }
 
 .op-menu-btn:hover {
@@ -1871,7 +1904,7 @@ button.ghost {
 
     .app-table-head,
     .app-table-row {
-        grid-template-columns: minmax(150px, 1.28fr) minmax(132px, 1.6fr) 90px 72px minmax(172px, 1.34fr);
+        grid-template-columns: minmax(150px, 1.28fr) minmax(132px, 1.6fr) 90px 72px minmax(186px, 1.34fr);
         gap: 10px;
     }
 
@@ -1886,21 +1919,14 @@ button.ghost {
     }
 
     .app-operate-cell {
-        --operate-main-width: 158px;
-        --operate-menu-width: 22px;
-        --operate-gap: 3px;
+        --operate-main-width: calc(var(--operate-start-width) + var(--operate-uninstall-width) + var(--operate-actions-gap));
+        --operate-menu-width: 14px;
+        --operate-menu-gap: 6px;
         --operate-start-width: 48px;
         --operate-uninstall-width: 92px;
+        --operate-actions-gap: 4px;
         --operate-btn-pad-x: 6px;
         --operate-btn-font-size: 0.69rem;
-    }
-
-    .app-operate-actions {
-        gap: 4px;
-    }
-
-    .op-menu-btn {
-        font-size: 0.88rem;
     }
 
 }
@@ -1917,12 +1943,12 @@ button.ghost {
 
     .app-table-head,
     .app-table-row {
-        grid-template-columns: minmax(160px, 1.24fr) 112px 72px minmax(188px, 1.34fr);
-        gap: 8px;
+        grid-template-columns: minmax(138px, 1.18fr) 96px 56px minmax(170px, 1.22fr);
+        gap: 6px;
     }
 
     .app-table-head {
-        font-size: 0.7rem;
+        font-size: 0.68rem;
         letter-spacing: 0.04em;
     }
 
@@ -1933,25 +1959,37 @@ button.ghost {
     }
 
     .app-operate-cell {
-        --operate-main-width: 160px;
-        --operate-menu-width: 20px;
-        --operate-gap: 2px;
-        --operate-start-width: 46px;
-        --operate-uninstall-width: 92px;
-        --operate-btn-pad-x: 6px;
-        --operate-btn-font-size: 0.68rem;
+        --operate-start-width: 42px;
+        --operate-uninstall-width: 84px;
+        --operate-actions-gap: 3px;
+        --operate-menu-width: 14px;
+        --operate-menu-gap: 6px;
+        --operate-btn-pad-x: 5px;
+        --operate-btn-font-size: 0.66rem;
     }
 
-    .app-operate-actions {
-        gap: 4px;
+    .app-status-pill {
+        min-width: 0;
+        padding: 4px 10px;
+        font-size: 0.72rem;
     }
 
-    .op-menu-btn {
-        font-size: 0.84rem;
+    .toggle-track {
+        width: 32px;
+        height: 18px;
+    }
+
+    .toggle-thumb {
+        width: 14px;
+        height: 14px;
+    }
+
+    .toggle-switch input:checked + .toggle-track .toggle-thumb {
+        transform: translateX(14px);
     }
 }
 
-@container app-store-table (max-width: 440px) {
+@container app-store-table (max-width: 400px) {
     .app-table-head span:nth-child(5),
     .app-table-head span:nth-child(6),
     .app-table-cell:nth-child(5),
