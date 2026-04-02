@@ -3279,6 +3279,22 @@ button.ghost {
         display: inline-flex;
     }
 
+    .brand {
+        position: relative;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding-right: 0;
+    }
+
+    .brand-copy {
+        gap: 0;
+    }
+
+    .brand-alias {
+        display: none;
+    }
+
     .resource-bar {
         display: grid;
         grid-template-columns: 1fr;
@@ -3629,10 +3645,6 @@ button.ghost {
         backdrop-filter: blur(10px);
     }
 
-    .brand {
-        gap: 0;
-    }
-
     .brand-status {
         gap: 6px;
         padding: 9px 10px;
@@ -3684,9 +3696,9 @@ button.ghost {
 
     .sidebar-toggle,
     .sidebar-close {
-        width: 38px;
-        height: 38px;
-        min-width: 38px;
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
         border-radius: 10px;
     }
 
