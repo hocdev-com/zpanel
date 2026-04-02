@@ -296,7 +296,7 @@ func TestConfigureApacheGeneratesFastCGIConfig(t *testing.T) {
 		t.Fatalf("write conf: %v", err)
 	}
 
-	if err := manager.configureApache("8.4.19"); err != nil {
+	if err := manager.configureApache("8.4.19", apacheHTTPPort); err != nil {
 		t.Fatalf("configure apache: %v", err)
 	}
 
@@ -348,7 +348,7 @@ func TestWriteApacheVHostConfigUsesSitePHPVersion(t *testing.T) {
 		t.Fatalf("write httpd conf: %v", err)
 	}
 
-	if err := manager.writeApacheVHostConfig(); err != nil {
+	if err := manager.writeApacheVHostConfig(apacheHTTPPort); err != nil {
 		t.Fatalf("write vhost config: %v", err)
 	}
 
@@ -385,7 +385,7 @@ func TestWriteApacheVHostConfigCreatesSiteFileWithoutApacheInstall(t *testing.T)
 		t.Fatalf("save website config: %v", err)
 	}
 
-	if err := manager.writeApacheVHostConfig(); err != nil {
+	if err := manager.writeApacheVHostConfig(apacheHTTPPort); err != nil {
 		t.Fatalf("write vhost config: %v", err)
 	}
 

@@ -4,23 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>zPanel</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260327-16" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260402-01" />
 </head>
 <body>
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <main class="app-layout">
         <aside class="sidebar" id="sidebar">
             <div class="brand">
-                <div class="brand-badge">
-                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                        <line x1="8" y1="21" x2="16" y2="21"></line>
-                        <line x1="12" y1="17" x2="12" y2="21"></line>
-                    </svg>
-                </div>
-                <div>
-                    <h1>zPanel</h1>
-                    <p>127.0.0.1</p>
+                <div class="brand-copy">
+                    <div class="brand-meta">
+                        <span class="brand-status" aria-label="Panel host and log count">
+                            <span class="brand-status-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="12" rx="1.5"></rect>
+                                    <line x1="8" y1="20" x2="16" y2="20"></line>
+                                    <line x1="12" y1="16" x2="12" y2="20"></line>
+                                </svg>
+                            </span>
+                            <span class="brand-status-host" id="brand-panel-host">127.0.0.1</span>
+                            <span class="brand-status-logs" title="Logs">
+                                <strong id="brand-log-count">0</strong>
+                            </span>
+                        </span>
+                    </div>
                 </div>
                 <button class="sidebar-close" id="sidebar-close" type="button" aria-label="Close menu">
                     <span></span>
@@ -206,6 +212,7 @@
                     </div>
                     <div class="app-table-wrap">
                         <div class="app-table-head">
+                            <span>Icon</span>
                             <span>Software name</span>
                             <span>Developer</span>
                             <span>Instructions</span>
@@ -251,7 +258,7 @@
                     </div>
                     <div class="website-table">
                         <div class="website-table-head">
-                            <span></span>
+                            <span class="website-head-spacer" aria-hidden="true"></span>
                             <span>Site name</span>
                             <span>Status</span>
                             <span>PHP</span>
@@ -354,6 +361,6 @@
         </section>
     </div>
 
-    <script src="/static/app.js?v=20260327-12"></script>
+    <script src="/static/app.js?v=20260402-01"></script>
 </body>
 </html>

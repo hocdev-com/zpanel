@@ -16,9 +16,13 @@ const sidebarEl = document.getElementById("sidebar");
 const sidebarToggleEl = document.getElementById("sidebar-toggle");
 const sidebarCloseEl = document.getElementById("sidebar-close");
 const sidebarBackdropEl = document.getElementById("sidebar-backdrop");
+const brandPanelHostEl = document.getElementById("brand-panel-host");
+const brandLogCountEl = document.getElementById("brand-log-count");
 const WEBSITE_CACHE_KEY = "zpanel:websites";
 const STATUS_REFRESH_VISIBLE_MS = 5000;
 const STATUS_REFRESH_HIDDEN_MS = 60000;
+const STATUS_REFRESH_VISIBLE_LITE_MS = 15000;
+const STATUS_REFRESH_HIDDEN_LITE_MS = 120000;
 let statusRefreshTimer = null;
 let statusRefreshInFlight = null;
 let collectionRefreshInFlight = {
@@ -43,7 +47,61 @@ let appInstallPollers = new Map();
 let appInstallPollRequests = new Set();
 let appRefreshRequestSeq = 0;
 let appRefreshAppliedSeq = 0;
+let websiteRefreshRequestSeq = 0;
+let websiteRefreshAppliedSeq = 0;
 let activeView = "overview";
+let performanceMode = "standard";
+let lastStatusSignature = "";
+let lastAppsSignature = "";
+let lastWebsiteSignature = "";
+let lastDatabaseSignature = "";
+let lastSoftwareSnapshotSignature = "";
+let lastPHPVersionsSignature = "";
+let lastNetworkChartSignature = "";
+
+function safeSerialize(value) {
+    try {
+        return JSON.stringify(value ?? null);
+    } catch {
+        return "";
+    }
+}
+
+function detectPerformanceMode() {
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const hardwareConcurrency = Number(window.navigator.hardwareConcurrency || 0);
+    const deviceMemory = Number(window.navigator.deviceMemory || 0);
+    const looksLowSpec = (hardwareConcurrency > 0 && hardwareConcurrency <= 4)
+        || (deviceMemory > 0 && deviceMemory <= 4);
+
+    return prefersReducedMotion || looksLowSpec ? "lite" : "standard";
+}
+
+function applyPerformanceMode() {
+    performanceMode = detectPerformanceMode();
+    document.documentElement.dataset.performanceMode = performanceMode;
+}
+
+function isLiteMode() {
+    return performanceMode === "lite";
+}
+
+function formatPanelHost(hostname) {
+    const rawHost = String(hostname || "").trim();
+    if (!rawHost || rawHost === "::1" || rawHost.toLowerCase() === "localhost") {
+        return "127.0.0.1";
+    }
+    return rawHost;
+}
+
+function syncBrandSummary(hostname = window.location.hostname, logCount = 0) {
+    if (brandPanelHostEl) {
+        brandPanelHostEl.textContent = formatPanelHost(hostname);
+    }
+    if (brandLogCountEl) {
+        brandLogCountEl.textContent = String(Math.max(0, Number(logCount) || 0));
+    }
+}
 
 function isMobileSidebar() {
     return window.matchMedia("(max-width: 980px)").matches;
@@ -191,15 +249,21 @@ function showConnectionError(error) {
 function setPanelOfflineState(error) {
     const message = error?.message || "Failed to fetch";
     connectionState = "offline";
+    lastStatusSignature = "";
+    lastNetworkChartSignature = "";
+    lastAppsSignature = "";
+    lastDatabaseSignature = "";
+    lastSoftwareSnapshotSignature = "";
     showConnectionError(error);
-    setTextContent("resource-system-label", "Panel offline");
+    syncBrandSummary(window.location.hostname, 0);
+    setTextContent("resource-system-label", "Offline");
     setTextContent("resource-uptime", "Waiting for service");
     setTextContent("website-count", "-");
     setTextContent("ftp-count", "-");
     setTextContent("database-count", "-");
     setTextContent("cpu-usage", "-");
     setTextContent("ram-usage", "-");
-    setTextContent("ram-copy", "Panel is not connected");
+    setTextContent("ram-copy", "Not connected");
     setTextContent("software-status-apache", "Unavailable");
     setTextContent("software-status-php", "Unavailable");
     setTextContent("software-status-mysql", "Unavailable");
@@ -234,7 +298,15 @@ function saveCachedWebsites(websites) {
 
 function renderWebsiteList(websites) {
     const websiteItems = Array.isArray(websites) ? websites : [];
+    lastWebsiteSignature = safeSerialize(websiteItems.map((website) => ({
+        domain: website?.domain || "",
+        path: website?.path || "",
+        php_version: website?.php_version || "",
+        status: website?.status || "",
+        url: website?.url || "",
+    })));
     websiteListEl.replaceChildren();
+    setTextContent("website-count", String(websiteItems.length));
 
     if (websiteItems.length === 0) {
         websiteListEl.innerHTML = `<div class="website-empty">No websites created yet. Add your first domain to generate a local site instantly.</div>`;
@@ -250,7 +322,6 @@ function renderCachedWebsites() {
         return;
     }
 
-    document.getElementById("website-count").textContent = cachedWebsites.length;
     renderWebsiteList(cachedWebsites);
 }
 
@@ -282,6 +353,11 @@ function updateNetworkChart(history) {
     const networkHistory = Array.isArray(history) && history.length > 1
         ? history.map((value) => Math.max(0, Number(value) || 0))
         : [0, 0];
+    const historySignature = safeSerialize(networkHistory);
+    if (historySignature === lastNetworkChartSignature) {
+        return;
+    }
+    lastNetworkChartSignature = historySignature;
     const width = 360;
     const height = 140;
     const maxValue = Math.max(...networkHistory, 1);
@@ -326,7 +402,32 @@ async function loadStatus() {
     const downloadSpeedKbps = Number(data.download_speed_kbps ?? 0);
     const totalSentGb = Number(data.total_sent_gb ?? 0);
     const totalReceivedGb = Number(data.total_received_gb ?? 0);
+    const logFiles = Number(data.log_files ?? 0);
+    const statusSignature = safeSerialize({
+        status: data.status || "",
+        os_label: data.os_label || "",
+        uptime_seconds: Number(data.uptime_seconds ?? 0),
+        websites,
+        databases,
+        ftpCount,
+        cpuUsagePercent,
+        ramUsedMb,
+        ramTotalMb,
+        ramUsagePercent,
+        uploadSpeedKbps,
+        downloadSpeedKbps,
+        totalSentGb,
+        totalReceivedGb,
+        logFiles,
+        network: Array.isArray(data.network_history_kbps) ? data.network_history_kbps : [],
+    });
 
+    if (statusSignature === lastStatusSignature) {
+        return data;
+    }
+
+    lastStatusSignature = statusSignature;
+    syncBrandSummary(window.location.hostname, logFiles);
     document.getElementById("resource-system-label").textContent = data.os_label || "System Resource";
     document.getElementById("resource-uptime").textContent = formatUptime(data.uptime_seconds);
     document.getElementById("website-count").textContent = websites;
@@ -340,6 +441,7 @@ async function loadStatus() {
     document.getElementById("total-sent").textContent = formatGigabytes(totalSentGb);
     document.getElementById("total-received").textContent = formatGigabytes(totalReceivedGb);
     updateNetworkChart(data.network_history_kbps);
+    return data;
 }
 
 async function refreshStatusOnly() {
@@ -444,7 +546,7 @@ function websiteCard(website) {
     const phpVersion = website.php_version || "8.4";
     const requestCount = isRunning ? "9" : "0";
     const websiteName = websiteUrl
-        ? `<a class="website-domain-link" href="${websiteUrl}" target="_blank" rel="noreferrer">${website.domain}</a>`
+        ? `<button class="website-domain-link" data-open-url="${escapeHTML(websiteUrl)}" type="button">${website.domain}</button>`
         : `<span class="website-domain-link disabled">${website.domain}</span>`;
 
     wrapper.innerHTML = `
@@ -557,9 +659,15 @@ function appStoreRow(app) {
         }
     }
 
+    const appIcon = app.icon
+        ? `<div class="app-icon-tile custom"><img src="${app.icon}" alt="${escapeHTML(normalizeAppDisplayName(app.name))} icon"></div>`
+        : `<div class="software-badge ${badgeClass}">${badgeLabel}</div>`;
+
     wrapper.innerHTML = `
+        <div class="app-table-cell app-icon-cell">
+            ${appIcon}
+        </div>
         <div class="app-table-cell app-name-cell">
-            <div class="software-badge ${badgeClass}">${badgeLabel}</div>
             <div class="app-name-info">
                 <strong>${normalizeAppDisplayName(app.name)}</strong>
                 <span class="app-version-label">v${displayVersion}</span>
@@ -645,6 +753,8 @@ function buildPHPVersionRows(app) {
             _rowVersion: ver,
             _isFirstPhpRow: idx === 0,
             name: app.version_titles?.[ver] || `${app.name} ${ver}`,
+            description: app.version_instructions?.[ver] || app.description,
+            icon: app.version_icons?.[ver] || app.icon,
             version: ver,
             installed: isThisVersionInstalled,
             can_install: !isThisVersionInstalled,
@@ -672,6 +782,8 @@ function buildGenericVersionRows(app) {
             _rowVersion: ver,
             _isFirstRow: idx === 0,
             name: app.version_titles?.[ver] || `${app.name} ${ver}`,
+            description: app.version_instructions?.[ver] || app.description,
+            icon: app.version_icons?.[ver] || app.icon,
             version: ver,
             installed: isThisVersionInstalled,
             can_install: !isThisVersionInstalled,
@@ -700,8 +812,22 @@ function updateSoftwareSnapshot(apps) {
     const listContainer = document.getElementById("dashboard-software-list");
     if (!listContainer) return;
 
-    listContainer.innerHTML = "";
     const appItems = expandAppsForDisplay(apps);
+    const dashboardItems = appItems
+        .filter((app) => app?.show_on_dashboard)
+        .slice(0, 6)
+        .map((app) => ({
+            id: String(app.id || "").startsWith("php:") ? "php" : app.id,
+            name: app.name,
+            icon: app.icon || "",
+        }));
+    const snapshotSignature = safeSerialize(dashboardItems);
+    if (snapshotSignature === lastSoftwareSnapshotSignature) {
+        return;
+    }
+
+    lastSoftwareSnapshotSignature = snapshotSignature;
+    listContainer.innerHTML = "";
     let count = 0;
     const MAX_CARDS = 6;
 
@@ -711,20 +837,17 @@ function updateSoftwareSnapshot(apps) {
 
         const cardId = String(app.id || "").startsWith("php:") ? "php" : app.id;
         const cardName = app.name;
-        listContainer.appendChild(createSoftwareCard(cardId, cardName, app.version, app.status_label || "Running"));
+        listContainer.appendChild(createSoftwareCard(cardId, cardName, app.icon));
         count++;
     }
 }
 
-function createSoftwareCard(id, name, version, status) {
+function createSoftwareCard(id, name, icon = "") {
     const card = document.createElement("article");
     card.className = "software-card";
     card.dataset.softwareId = id;
 
     const displayName = normalizeAppDisplayName(name);
-    const statusClass = String(status || "").toLowerCase() === "not installed"
-        ? "status-not-installed"
-        : "status-installed";
 
     const badgeClass = id === "apache" ? "apache-badge" : id === "php" ? "php-badge" : "mysql-badge";
     let iconSvg = "";
@@ -736,21 +859,36 @@ function createSoftwareCard(id, name, version, status) {
         iconSvg = `<svg viewBox="0 0 48 48" class="software-icon software-icon-mysql"><path d="M10 29c4-7 11-11 18-11 5 0 8 2 11 5" /><path d="M18 29c4 0 7 2 10 5" /><path d="M28 23c1-3 4-5 7-6" /><path d="M36 16l2-4" /><path d="M36 16l4-1" /><circle cx="31" cy="21" r="1.5" fill="currentColor" stroke="none" /></svg>`;
     }
 
+    const iconMarkup = icon
+        ? `
+            <div class="software-badge custom" aria-hidden="true">
+                <img src="${icon}" alt="${escapeHTML(displayName)} icon">
+            </div>
+        `
+        : `
+            <div class="software-badge ${badgeClass}" aria-hidden="true">
+                ${iconSvg}
+            </div>
+        `;
+
     card.innerHTML = `
-        <div class="software-badge ${badgeClass}" aria-hidden="true">
-            ${iconSvg}
-        </div>
+        ${iconMarkup}
         <strong>${displayName}</strong>
-        <span>v${version}</span>
-        <small class="${statusClass}">${status}</small>
     `;
     return card;
 }
 
 function renderApps(apps) {
     const appItems = Array.isArray(apps) ? apps : [];
+    const appSignature = safeSerialize(appItems);
     latestAppsPayload = appItems;
     syncRunningInstallJobs(appItems);
+
+    if (appSignature === lastAppsSignature) {
+        return;
+    }
+
+    lastAppsSignature = appSignature;
     appStoreListEl.replaceChildren();
 
     if (appItems.length === 0) {
@@ -830,6 +968,12 @@ function getInstalledPHPVersions(apps) {
 
 function syncPHPVersionOptions(apps = latestAppsPayload) {
     const versions = getInstalledPHPVersions(apps);
+    const versionsSignature = safeSerialize(versions);
+    if (versionsSignature === lastPHPVersionsSignature) {
+        return;
+    }
+
+    lastPHPVersionsSignature = versionsSignature;
     const previousValue = websitePHPVersionEl.value;
     websitePHPVersionEl.replaceChildren();
 
@@ -858,6 +1002,17 @@ function syncPHPVersionOptions(apps = latestAppsPayload) {
     }
 }
 
+function setWebsitePHPVersionLoadingState(message = "Loading PHP versions...") {
+    lastPHPVersionsSignature = "";
+    websitePHPVersionEl.replaceChildren();
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = message;
+    websitePHPVersionEl.appendChild(option);
+    websitePHPVersionEl.disabled = true;
+    websiteSubmitButtonEl.disabled = true;
+}
+
 function renderAppStoreSettings(payload) {
     const groups = Array.isArray(payload?.groups) ? payload.groups : [];
     appStoreSettingsPathEl.textContent = payload?.file_path
@@ -873,6 +1028,28 @@ function renderAppStoreSettings(payload) {
         const releases = Array.isArray(group.releases) ? group.releases : [];
         return releases.map((release) => `
             <div class="app-store-settings-row">
+                <span class="app-store-settings-icon">
+                    <label class="app-store-icon-upload">
+                        <input
+                            type="file"
+                            accept="image/*"
+                            data-app-store-icon-file
+                            data-app-id="${escapeHTML(group.id || "")}"
+                            data-app-version="${escapeHTML(release.version || "")}"
+                        />
+                        <input
+                            type="hidden"
+                            data-app-store-icon
+                            data-app-id="${escapeHTML(group.id || "")}"
+                            data-app-version="${escapeHTML(release.version || "")}"
+                            value="${escapeHTML(release.icon || "")}"
+                        />
+                        <span class="app-store-icon-preview ${release.icon ? "has-image" : ""}">
+                            ${release.icon ? `<img src="${escapeHTML(release.icon)}" alt="App icon">` : `<span>24x24</span>`}
+                        </span>
+                        <span class="app-store-icon-copy">Upload</span>
+                    </label>
+                </span>
                 <span class="app-store-settings-title">
                     <input
                         type="text"
@@ -886,11 +1063,11 @@ function renderAppStoreSettings(payload) {
                 <span class="app-store-settings-description">
                     <input
                         type="text"
-                        data-app-store-description
+                        data-app-store-instructions
                         data-app-id="${escapeHTML(group.id || "")}"
                         data-app-version="${escapeHTML(release.version || "")}"
-                        value="${escapeHTML(release.description || release.default_description || "")}"
-                        placeholder="${escapeHTML(release.default_description || "")}"
+                        value="${escapeHTML(release.instructions || release.default_instructions || "")}"
+                        placeholder="${escapeHTML(release.default_instructions || "")}"
                     />
                 </span>
                 <span class="app-store-settings-link">
@@ -910,8 +1087,9 @@ function renderAppStoreSettings(payload) {
     appStoreSettingsFormEl.innerHTML = `
         <div class="app-store-settings-table">
             <div class="app-store-settings-head">
+                <span>Icon</span>
                 <span>Title</span>
-                <span>Description</span>
+                <span>Instructions</span>
                 <span>Link</span>
             </div>
             <div class="app-store-settings-body">${rows}</div>
@@ -945,6 +1123,43 @@ async function refreshAppStoreSettings(options = {}) {
     return request;
 }
 
+function resizeImageToDataUrl(file, size = 24) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Failed to read image."));
+        reader.onload = () => {
+            const image = new Image();
+            image.onerror = () => reject(new Error("Invalid image file."));
+            image.onload = () => {
+                const canvas = document.createElement("canvas");
+                canvas.width = size;
+                canvas.height = size;
+                const ctx = canvas.getContext("2d");
+                if (!ctx) {
+                    reject(new Error("Canvas is not available."));
+                    return;
+                }
+
+                const srcWidth = image.naturalWidth || image.width;
+                const srcHeight = image.naturalHeight || image.height;
+                const scale = Math.max(size / srcWidth, size / srcHeight);
+                const drawWidth = srcWidth * scale;
+                const drawHeight = srcHeight * scale;
+                const dx = (size - drawWidth) / 2;
+                const dy = (size - drawHeight) / 2;
+
+                ctx.clearRect(0, 0, size, size);
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = "high";
+                ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+                resolve(canvas.toDataURL("image/png"));
+            };
+            image.src = String(reader.result || "");
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
 async function refreshApps(options = {}) {
     const force = Boolean(options.force);
 
@@ -972,16 +1187,30 @@ async function refreshApps(options = {}) {
     return request;
 }
 
-async function refreshWebsites() {
-    if (collectionRefreshInFlight.websites) {
+async function refreshWebsites(options = {}) {
+    const force = Boolean(options.force);
+    if (!force && collectionRefreshInFlight.websites) {
         return collectionRefreshInFlight.websites;
     }
 
+    const requestSeq = ++websiteRefreshRequestSeq;
     collectionRefreshInFlight.websites = api("/api/websites")
         .then((websites) => {
             const websiteItems = Array.isArray(websites) ? websites : [];
-            saveCachedWebsites(websiteItems);
-            renderWebsiteList(websiteItems);
+            const websiteSignature = safeSerialize(websiteItems.map((website) => ({
+                domain: website?.domain || "",
+                path: website?.path || "",
+                php_version: website?.php_version || "",
+                status: website?.status || "",
+                url: website?.url || "",
+            })));
+            if (requestSeq >= websiteRefreshAppliedSeq) {
+                websiteRefreshAppliedSeq = requestSeq;
+                saveCachedWebsites(websiteItems);
+                if (websiteSignature !== lastWebsiteSignature) {
+                    renderWebsiteList(websiteItems);
+                }
+            }
             collectionLoaded.websites = true;
             return websiteItems;
         })
@@ -1000,6 +1229,13 @@ async function refreshDatabases() {
     collectionRefreshInFlight.databases = api("/api/databases")
         .then((databases) => {
             const databaseItems = Array.isArray(databases) ? databases : [];
+            const databaseSignature = safeSerialize(databaseItems);
+            if (databaseSignature === lastDatabaseSignature) {
+                collectionLoaded.databases = true;
+                return databaseItems;
+            }
+
+            lastDatabaseSignature = databaseSignature;
             databaseListEl.replaceChildren();
 
             if (databaseItems.length === 0) {
@@ -1036,7 +1272,10 @@ async function handleWebsiteAction(action, domain) {
     });
 
     showResult(data);
-    await refreshAll();
+    await Promise.allSettled([
+        refreshWebsites({ force: true }),
+        refreshStatusOnly(),
+    ]);
 }
 
 async function handleAppStoreAction(action, id, version = "") {
@@ -1107,11 +1346,13 @@ function syncInstallJob(job, customKey = "") {
 
     const key = customKey || getInstallJobKey(job.app_id, job.version || "");
     appInstallJobs.set(key, job);
+    lastAppsSignature = "";
 }
 
 function clearInstallJob(id, version = "") {
     const key = getInstallJobKey(id, version);
     appInstallJobs.delete(key);
+    lastAppsSignature = "";
     appInstallPollRequests.delete(key);
     const poller = appInstallPollers.get(key);
     if (poller) {
@@ -1245,7 +1486,7 @@ websiteFormEl.addEventListener("submit", async (event) => {
         websitePathTouched = false;
         closeWebsiteModal();
         await Promise.allSettled([
-            refreshWebsites(),
+            refreshWebsites({ force: true }),
             refreshStatusOnly(),
         ]);
     } catch (error) {
@@ -1277,6 +1518,15 @@ document.getElementById("database-form").addEventListener("submit", async (event
 });
 
 websiteListEl.addEventListener("click", async (event) => {
+    const openTarget = event.target.closest("[data-open-url]");
+    if (openTarget) {
+        const url = String(openTarget.dataset.openUrl || "").trim();
+        if (url) {
+            window.open(url, "_blank", "noopener,noreferrer");
+        }
+        return;
+    }
+
     const button = event.target.closest("button[data-action]");
     if (!button) {
         return;
@@ -1391,13 +1641,39 @@ appStoreListEl.addEventListener("change", async (event) => {
     }
 });
 
+appStoreSettingsFormEl.addEventListener("change", async (event) => {
+    const fileInput = event.target.closest("[data-app-store-icon-file]");
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        return;
+    }
+
+    try {
+        const dataUrl = await resizeImageToDataUrl(fileInput.files[0], 24);
+        const upload = fileInput.closest(".app-store-icon-upload");
+        const hiddenInput = upload?.querySelector("[data-app-store-icon]");
+        const preview = upload?.querySelector(".app-store-icon-preview");
+        if (hiddenInput) {
+            hiddenInput.value = dataUrl;
+        }
+        if (preview) {
+            preview.classList.add("has-image");
+            preview.innerHTML = `<img src="${dataUrl}" alt="App icon">`;
+        }
+    } catch (error) {
+        showResult(`Error: ${error.message}`);
+    } finally {
+        fileInput.value = "";
+    }
+});
+
 appStoreSettingsFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
 
     const submitButton = appStoreSettingsFormEl.querySelector("button[type='submit']");
     const downloads = {};
     const titles = {};
-    const descriptions = {};
+    const instructions = {};
+    const icons = {};
 
     appStoreSettingsFormEl.querySelectorAll("[data-app-store-download]").forEach((input) => {
         const appId = String(input.dataset.appId || "").trim();
@@ -1426,17 +1702,30 @@ appStoreSettingsFormEl.addEventListener("submit", async (event) => {
         titles[appId][version] = value;
     });
 
-    appStoreSettingsFormEl.querySelectorAll("[data-app-store-description]").forEach((input) => {
+    appStoreSettingsFormEl.querySelectorAll("[data-app-store-instructions]").forEach((input) => {
         const appId = String(input.dataset.appId || "").trim();
         const version = String(input.dataset.appVersion || "").trim();
         const value = String(input.value || "").trim();
         if (!appId || !version) {
             return;
         }
-        if (!descriptions[appId]) {
-            descriptions[appId] = {};
+        if (!instructions[appId]) {
+            instructions[appId] = {};
         }
-        descriptions[appId][version] = value;
+        instructions[appId][version] = value;
+    });
+
+    appStoreSettingsFormEl.querySelectorAll("[data-app-store-icon]").forEach((input) => {
+        const appId = String(input.dataset.appId || "").trim();
+        const version = String(input.dataset.appVersion || "").trim();
+        const value = String(input.value || "").trim();
+        if (!appId || !version || !value) {
+            return;
+        }
+        if (!icons[appId]) {
+            icons[appId] = {};
+        }
+        icons[appId][version] = value;
     });
 
     submitButton.disabled = true;
@@ -1445,7 +1734,7 @@ appStoreSettingsFormEl.addEventListener("submit", async (event) => {
     try {
         const payload = await api("/api/settings/app-store", {
             method: "POST",
-            body: JSON.stringify({ downloads, titles, descriptions }),
+            body: JSON.stringify({ downloads, titles, instructions, icons }),
         });
         renderAppStoreSettings(payload);
         await refreshApps({ force: true });
@@ -1719,8 +2008,10 @@ function syncViewFromLocation(options = {}) {
 
 // Initial data load
 syncViewFromLocation({ replaceHistory: true, loadData: false });
+applyPerformanceMode();
 renderCachedWebsites();
 setSidebarOpen(false);
+syncBrandSummary(window.location.hostname, 0);
 
 refreshAll().catch((error) => {
     setPanelOfflineState(error);
@@ -1737,9 +2028,13 @@ sidebarToggleEl?.addEventListener("click", toggleSidebar);
 sidebarCloseEl?.addEventListener("click", closeSidebar);
 sidebarBackdropEl?.addEventListener("click", closeSidebar);
 
-document.getElementById("website-open-modal").addEventListener("click", openWebsiteModal);
+document.getElementById("website-open-modal").addEventListener("click", () => {
+    openWebsiteModal().catch((error) => {
+        showResult(`Error: ${error.message}`);
+    });
+});
 document.getElementById("website-refresh").addEventListener("click", () => {
-    refreshWebsites().catch((error) => {
+    refreshWebsites({ force: true }).catch((error) => {
         showResult(`Error: ${error.message}`);
     });
 });
@@ -1797,8 +2092,8 @@ function scheduleStatusRefresh(immediate = false) {
     const delay = immediate
         ? 0
         : document.visibilityState === "visible"
-            ? STATUS_REFRESH_VISIBLE_MS
-            : STATUS_REFRESH_HIDDEN_MS;
+            ? (isLiteMode() ? STATUS_REFRESH_VISIBLE_LITE_MS : STATUS_REFRESH_VISIBLE_MS)
+            : (isLiteMode() ? STATUS_REFRESH_HIDDEN_LITE_MS : STATUS_REFRESH_HIDDEN_MS);
 
     statusRefreshTimer = setTimeout(() => {
         refreshStatusOnly()
@@ -1818,14 +2113,29 @@ document.addEventListener("visibilitychange", () => {
     scheduleStatusRefresh();
 });
 
+window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", () => {
+    applyPerformanceMode();
+    scheduleStatusRefresh();
+});
+
 scheduleStatusRefresh();
 
-function openWebsiteModal() {
+async function openWebsiteModal() {
     websitePathTouched = false;
+    websiteFormEl.reset();
     websitePathInputEl.value = "";
-    syncPHPVersionOptions();
     websiteModalEl.hidden = false;
     document.body.classList.add("modal-open");
+    setWebsitePHPVersionLoadingState();
+
+    try {
+        const payload = await refreshApps({ force: true });
+        syncPHPVersionOptions(payload?.apps);
+    } catch (error) {
+        syncPHPVersionOptions();
+        showResult(`Error: ${error.message}`);
+    }
+
     websiteDomainInputEl.focus();
 }
 

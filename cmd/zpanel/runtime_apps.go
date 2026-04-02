@@ -21,9 +21,12 @@ type runtimeApp struct {
 	SelectedVersion         string            `json:"selected_version,omitempty"`
 	AvailableVersions       []string          `json:"available_versions,omitempty"`
 	VersionTitles           map[string]string `json:"version_titles,omitempty"`
+	VersionInstructions     map[string]string `json:"version_instructions,omitempty"`
+	VersionIcons            map[string]string `json:"version_icons,omitempty"`
 	InstalledVersions       []string          `json:"installed_versions,omitempty"`
 	RunningVersions         []string          `json:"running_versions,omitempty"`
 	Description             string            `json:"description"`
+	Icon                    string            `json:"icon,omitempty"`
 	Developer               string            `json:"developer"`
 	InstallPath             string            `json:"install_path,omitempty"`
 	ShowOnDashboard         bool              `json:"show_on_dashboard"`

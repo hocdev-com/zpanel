@@ -45,7 +45,9 @@ func appStoreReleaseCatalog() map[string][]runtimeRelease {
 	}
 }
 
-const apacheHTTPPort = 8081
+const apacheHTTPPort = 80
+
+var apacheHTTPFallbackPorts = []int{8081, 8088}
 
 var defaultPHPExtensions = []string{"mysqli", "pdo_mysql", "mbstring", "openssl", "curl"}
 var websiteRoutingSyncMu sync.Mutex
@@ -426,6 +428,41 @@ func (m *windowsRuntimeManager) currentPHPVersion() string {
 	return ""
 }
 
+func (m *windowsRuntimeManager) configuredHTTPPort() int {
+	confBytes, err := os.ReadFile(m.httpdConfPath())
+	if err != nil {
+		return 0
+	}
+
+	match := regexp.MustCompile(`(?im)^\s*Listen\s+(?:127\.0\.0\.1:)?(\d+)\s*$`).FindStringSubmatch(string(confBytes))
+	if len(match) < 2 {
+		return 0
+	}
+
+	port, _ := strconv.Atoi(strings.TrimSpace(match[1]))
+	return port
+}
+
+func apachePortCandidates() []int {
+	ports := []int{apacheHTTPPort}
+	ports = append(ports, apacheHTTPFallbackPorts...)
+	return ports
+}
+
+func (m *windowsRuntimeManager) selectApacheHTTPPort() int {
+	for _, port := range apachePortCandidates() {
+		if !testTCPPort("127.0.0.1", port, 120*time.Millisecond) {
+			return port
+		}
+	}
+
+	if configured := m.configuredHTTPPort(); configured > 0 {
+		return configured
+	}
+
+	return apacheHTTPPort
+}
+
 func (m *windowsRuntimeManager) hasInstalledPHP() bool {
 	return len(m.getInstalledPHPVersions()) > 0
 }
@@ -458,6 +495,10 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	mysqlInstalled := fileExists(m.mysqlExe())
 	apacheVersion := versionOrDefault(m.installedVersionFromMetadata("apache"), apacheReleases[0].Version)
 	mysqlVersion := versionOrDefault(m.installedVersionFromMetadata("mysql"), mysqlReleases[0].Version)
+	apachePort := m.configuredHTTPPort()
+	if apachePort == 0 {
+		apachePort = apacheHTTPPort
+	}
 
 	var apacheRunning, mysqlRunning bool
 	var wg sync.WaitGroup
@@ -466,7 +507,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	go func() {
 		defer wg.Done()
 		if apacheInstalled {
-			apacheRunning = testTCPPort("127.0.0.1", 8081, 120*time.Millisecond)
+			apacheRunning = apacheListeningOnPort(apachePort)
 		}
 	}()
 
@@ -489,7 +530,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	}
 
 	apps := []runtimeApp{
-		newRuntimeApp("apache", "Apache", apacheVersion, availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, "8081", "http://127.0.0.1:8081/", releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
+		newRuntimeApp("apache", "Apache", apacheVersion, availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, strconv.Itoa(apachePort), formatPortURL("127.0.0.1", apachePort, "/"), releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
 	}
 
 	// Detect all installed PHP versions
@@ -508,7 +549,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 
 	phpURL := ""
 	if apacheRunning {
-		phpURL = "http://127.0.0.1:8081/phpinfo.php"
+		phpURL = formatPortURL("127.0.0.1", apachePort, "/phpinfo.php")
 	}
 	phpApp := newRuntimeApp("php", "PHP", mainPHPVersion, availableVersions(phpReleases), "Portable PHP runtime. Multiple versions supported per website.", phpInstallPath, phpInstalled, phpRunning, "9000+", phpURL, releaseURLs(phpReleases), phpInstalled && !phpRunning, phpRunning, apacheRunning, phpInstalled)
 	phpApp.InstalledVersions = installedPHPs
@@ -618,7 +659,7 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 		}
 	}
 	if plan.needApache {
-		if err := m.configureApache(selection.PHP.Version); err != nil {
+		if err := m.configureApache(selection.PHP.Version, m.selectApacheHTTPPort()); err != nil {
 			return err
 		}
 	}
@@ -1136,7 +1177,7 @@ func (m *windowsRuntimeManager) SavePHPExtensions(version string, enabled []stri
 	return os.WriteFile(iniPath, []byte(updated), 0o644)
 }
 
-func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
+func (m *windowsRuntimeManager) configureApache(phpVersion string, httpPort int) error {
 	confBytes, err := os.ReadFile(m.httpdConfPath())
 	if err != nil {
 		return fmt.Errorf("apache config not found: %w", err)
@@ -1147,8 +1188,8 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 	conf = regexp.MustCompile(`(?m)^ServerRoot ".*"\r?$`).ReplaceAllString(conf, `ServerRoot "`+apacheRootForward+`"`)
 	conf = regexp.MustCompile(`(?m)^Define SRVROOT ".*"\r?$`).ReplaceAllString(conf, `Define SRVROOT "`+apacheRootForward+`"`)
 	conf = strings.ReplaceAll(conf, "C:/Apache24-64", apacheRootForward)
-	conf = regexp.MustCompile(`(?m)^Listen\s+80\r?$`).ReplaceAllString(conf, "Listen 127.0.0.1:"+strconv.Itoa(apacheHTTPPort))
-	conf = regexp.MustCompile(`(?m)^#?ServerName\s+.*\r?$`).ReplaceAllString(conf, "ServerName 127.0.0.1:"+strconv.Itoa(apacheHTTPPort))
+	conf = regexp.MustCompile(`(?m)^Listen\s+\S+\r?$`).ReplaceAllString(conf, "Listen 127.0.0.1:"+strconv.Itoa(httpPort))
+	conf = regexp.MustCompile(`(?m)^#?ServerName\s+.*\r?$`).ReplaceAllString(conf, "ServerName 127.0.0.1:"+strconv.Itoa(httpPort))
 	conf = regexp.MustCompile(`(?m)^DirectoryIndex .+\r?$`).ReplaceAllString(conf, "DirectoryIndex index.php index.html")
 	conf = enableApacheModule(conf, "proxy_module", "mod_proxy.so")
 	conf = enableApacheModule(conf, "proxy_fcgi_module", "mod_proxy_fcgi.so")
@@ -1168,7 +1209,7 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string) error {
 		return err
 	}
 
-	if err := m.writeApacheVHostConfig(); err != nil {
+	if err := m.writeApacheVHostConfig(httpPort); err != nil {
 		return err
 	}
 	_ = os.Remove(filepath.Join(m.apacheRoot(), "conf", "extra", "zpanel-vhosts.conf"))
@@ -1239,41 +1280,49 @@ func (m *windowsRuntimeManager) startApache() error {
 	}
 
 	activePHPVersion := m.currentPHPVersion()
-	if activePHPVersion == "" || !fileExists(m.phpExe(activePHPVersion)) {
-		return errors.New("Apache HTTP Server requires at least one PHP Runtime to be installed. Please install a PHP version in the App Store first.")
-	}
-
-	if testTCPPort("127.0.0.1", 8081, 350*time.Millisecond) {
+	configuredPort := m.configuredHTTPPort()
+	if configuredPort > 0 && apacheListeningOnPort(configuredPort) {
 		return nil
 	}
 
 	if pid, _ := clearStalePIDFile(m.apachePIDPath(), "httpd.exe"); pid > 0 {
 		stopProcessTree(pid)
-		_ = waitForTCPPortClosed("127.0.0.1", 8081, 10*time.Second)
+		if configuredPort > 0 {
+			_ = waitForTCPPortClosed("127.0.0.1", configuredPort, 10*time.Second)
+		}
 	}
 
-	if err := m.configureApache(activePHPVersion); err != nil {
+	selectedPort := m.selectApacheHTTPPort()
+	if err := m.configureApache(activePHPVersion, selectedPort); err != nil {
 		return err
 	}
-	if err := m.startRequiredPHPFastCGI(); err != nil {
-		return err
+	pathParts := []string{filepath.Join(m.apacheRoot(), "bin")}
+	if activePHPVersion != "" && fileExists(m.phpExe(activePHPVersion)) {
+		pathParts = append([]string{m.phpRealRoot(activePHPVersion)}, pathParts...)
 	}
-
-	env := append(os.Environ(), "PATH="+m.phpRealRoot(activePHPVersion)+";"+filepath.Join(m.apacheRoot(), "bin")+";"+os.Getenv("PATH"))
+	pathParts = append(pathParts, os.Getenv("PATH"))
+	env := append(os.Environ(), "PATH="+strings.Join(pathParts, ";"))
 	if _, err := startHiddenProcess(m.apacheExe(), []string{"-d", m.apacheRoot(), "-f", m.httpdConfPath()}, m.apacheRoot(), env); err != nil {
 		return err
 	}
 
-	if !waitForTCPPort("127.0.0.1", 8081, 20*time.Second) {
-		return errors.New("apache did not start successfully on http://127.0.0.1:8081/")
+	if !waitForTCPPort("127.0.0.1", selectedPort, 20*time.Second) {
+		return fmt.Errorf("apache did not start successfully on %s", formatPortURL("127.0.0.1", selectedPort, "/"))
 	}
 	return nil
 }
 
 func (m *windowsRuntimeManager) stopApache() error {
+	configuredPort := m.configuredHTTPPort()
+	if configuredPort == 0 {
+		configuredPort = apacheHTTPPort
+	}
 	pid, _ := clearStalePIDFile(m.apachePIDPath(), "httpd.exe")
-	listeningPID, _ := getListeningPID(8081)
-	if pid == 0 && listeningPID == 0 && !testTCPPort("127.0.0.1", 8081, 350*time.Millisecond) {
+	listeningPID, _ := getListeningPID(configuredPort)
+	if !processMatches(listeningPID, "httpd.exe") {
+		listeningPID = 0
+	}
+	if pid == 0 && listeningPID == 0 && !apacheListeningOnPort(configuredPort) {
 		_ = os.Remove(m.apachePIDPath())
 		return nil
 	}
@@ -1285,8 +1334,7 @@ func (m *windowsRuntimeManager) stopApache() error {
 		stopProcessTree(listeningPID)
 	}
 
-	_ = waitForTCPPortClosed("127.0.0.1", 8081, 10*time.Second)
-	_ = m.stopAllPHPFastCGI()
+	_ = waitForTCPPortClosed("127.0.0.1", configuredPort, 10*time.Second)
 	_ = os.Remove(m.apachePIDPath())
 	return nil
 }
@@ -1356,6 +1404,9 @@ func (m *windowsRuntimeManager) uninstallPHP(version string) error {
 			return err
 		}
 	}
+	if err := m.stopPHPFastCGI(version); err != nil {
+		return err
+	}
 
 	paths := m.paths()
 	_ = os.RemoveAll(m.phpRoot(version))
@@ -1366,7 +1417,11 @@ func (m *windowsRuntimeManager) uninstallPHP(version string) error {
 
 	if fileExists(m.httpdConfPath()) {
 		nextVersion := m.currentPHPVersion()
-		if err := m.configureApache(nextVersion); err != nil {
+		httpPort := m.configuredHTTPPort()
+		if httpPort == 0 {
+			httpPort = apacheHTTPPort
+		}
+		if err := m.configureApache(nextVersion, httpPort); err != nil {
 			return err
 		}
 	}
@@ -1506,7 +1561,7 @@ func (m *windowsRuntimeManager) activeWebsitePHPVersions() ([]string, error) {
 	return versions, nil
 }
 
-func (m *windowsRuntimeManager) writeApacheVHostConfig() error {
+func (m *windowsRuntimeManager) writeApacheVHostConfig(httpPort int) error {
 	sites, err := listWebsites(m.projectRoot)
 	if err != nil {
 		return err
@@ -1535,7 +1590,7 @@ func (m *windowsRuntimeManager) writeApacheVHostConfig() error {
 			logName := apacheLogSafeName(site.Domain)
 			docRoot := quoteApachePath(site.Path)
 			builder.WriteString("\r\n")
-			builder.WriteString("<VirtualHost 127.0.0.1:" + strconv.Itoa(apacheHTTPPort) + ">\r\n")
+			builder.WriteString("<VirtualHost 127.0.0.1:" + strconv.Itoa(httpPort) + ">\r\n")
 			builder.WriteString("    ServerName " + site.Domain + "\r\n")
 			builder.WriteString("    DocumentRoot " + docRoot + "\r\n")
 			builder.WriteString("    DirectoryIndex index.php index.html\r\n")
@@ -1655,14 +1710,18 @@ func (m *windowsRuntimeManager) SyncWebsiteRouting() error {
 	defer websiteRoutingSyncMu.Unlock()
 
 	currentVersion := m.currentPHPVersion()
+	httpPort := m.configuredHTTPPort()
+	if httpPort == 0 {
+		httpPort = apacheHTTPPort
+	}
 	if currentVersion != "" && fileExists(m.httpdConfPath()) {
-		if err := m.configureApache(currentVersion); err != nil {
+		if err := m.configureApache(currentVersion, httpPort); err != nil {
 			return err
 		}
-	} else if err := m.writeApacheVHostConfig(); err != nil {
+	} else if err := m.writeApacheVHostConfig(httpPort); err != nil {
 		return err
 	}
-	if !fileExists(m.apacheExe()) || !testTCPPort("127.0.0.1", apacheHTTPPort, 350*time.Millisecond) {
+	if !fileExists(m.apacheExe()) || !apacheListeningOnPort(httpPort) {
 		return nil
 	}
 	runningBeforeRestart := m.runningPHPVersions(m.getInstalledPHPVersions())
@@ -1827,6 +1886,28 @@ func getListeningPID(port int) (int, error) {
 	return strconv.Atoi(string(match[1]))
 }
 
+func apacheListeningOnPort(port int) bool {
+	pid, err := getListeningPID(port)
+	if err != nil || pid == 0 {
+		return false
+	}
+	return processMatches(pid, "httpd.exe")
+}
+
+func formatPortURL(host string, port int, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if port == 80 {
+		return "http://" + host + path
+	}
+	return fmt.Sprintf("http://%s:%d%s", host, port, path)
+}
+
 func testTCPPort(host string, port int, timeout time.Duration) bool {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
 	if err != nil {
@@ -1862,6 +1943,9 @@ func (m *windowsRuntimeManager) StopAll() error {
 	var errs []string
 	if err := m.stopApache(); err != nil {
 		errs = append(errs, fmt.Sprintf("apache: %v", err))
+	}
+	if err := m.stopAllPHPFastCGI(); err != nil {
+		errs = append(errs, fmt.Sprintf("php: %v", err))
 	}
 	if err := m.stopMySQL(); err != nil {
 		errs = append(errs, fmt.Sprintf("mysql: %v", err))

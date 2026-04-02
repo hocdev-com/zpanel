@@ -14,19 +14,21 @@ import (
 type appStoreSettingsFile struct {
 	Downloads       map[string]map[string]string `json:"downloads,omitempty"`
 	Titles          map[string]map[string]string `json:"titles,omitempty"`
-	Descriptions    map[string]map[string]string `json:"descriptions,omitempty"`
+	Instructions    map[string]map[string]string `json:"instructions,omitempty"`
+	Icons           map[string]map[string]string `json:"icons,omitempty"`
 	ShowOnDashboard map[string]map[string]bool   `json:"show_on_dashboard,omitempty"`
 }
 
 type appStoreSettingsEntry struct {
-	Version            string `json:"version"`
-	Title              string `json:"title"`
-	DefaultTitle       string `json:"default_title"`
-	Description        string `json:"description"`
-	DefaultDescription string `json:"default_description"`
-	URL                string `json:"url"`
-	DefaultURL         string `json:"default_url"`
-	ShowOnDashboard    bool   `json:"show_on_dashboard"`
+	Version             string `json:"version"`
+	Title               string `json:"title"`
+	DefaultTitle        string `json:"default_title"`
+	Instructions        string `json:"instructions"`
+	DefaultInstructions string `json:"default_instructions"`
+	Icon                string `json:"icon"`
+	URL                 string `json:"url"`
+	DefaultURL          string `json:"default_url"`
+	ShowOnDashboard     bool   `json:"show_on_dashboard"`
 }
 
 type appStoreSettingsGroup struct {
@@ -44,7 +46,9 @@ type appStoreSettingsResponse struct {
 type appStoreSettingsRequest struct {
 	Downloads       map[string]map[string]string `json:"downloads"`
 	Titles          map[string]map[string]string `json:"titles"`
+	Instructions    map[string]map[string]string `json:"instructions"`
 	Descriptions    map[string]map[string]string `json:"descriptions"`
+	Icons           map[string]map[string]string `json:"icons"`
 	ShowOnDashboard map[string]map[string]bool   `json:"show_on_dashboard"`
 }
 
@@ -58,8 +62,8 @@ func ensureAppStoreSettingsTable(db *sql.DB) error {
 		return err
 	}
 
-	// Migration: add title and description if they don't exist
-	var hasTitle, hasDescription bool
+	// Migration: add title, description and icon data if they don't exist
+	var hasTitle, hasDescription, hasIconData bool
 	rows, err := db.Query("PRAGMA table_info(app_store_settings)")
 	if err == nil {
 		for rows.Next() {
@@ -74,6 +78,9 @@ func ensureAppStoreSettingsTable(db *sql.DB) error {
 				if name == "description" {
 					hasDescription = true
 				}
+				if name == "icon_data" {
+					hasIconData = true
+				}
 			}
 		}
 		rows.Close()
@@ -86,6 +93,11 @@ func ensureAppStoreSettingsTable(db *sql.DB) error {
 	}
 	if !hasDescription {
 		if _, err := db.Exec(`ALTER TABLE app_store_settings ADD COLUMN description TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !hasIconData {
+		if _, err := db.Exec(`ALTER TABLE app_store_settings ADD COLUMN icon_data TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}
@@ -130,8 +142,17 @@ func defaultAppStoreReleaseTitle(appID string, version string) string {
 	return strings.TrimSpace(strings.Title(appID) + " " + version)
 }
 
-func defaultAppStoreReleaseDescription(appID string, version string) string {
-	return fmt.Sprintf("Download URL for %s version %s.", strings.Title(appID), version)
+func defaultAppStoreReleaseInstructions(appID string, version string) string {
+	switch strings.ToLower(strings.TrimSpace(appID)) {
+	case "apache":
+		return "Portable web server stored in data/runtime."
+	case "php":
+		return "Portable PHP runtime. Multiple versions supported per website."
+	case "mysql":
+		return "Portable MySQL server stored in data/runtime."
+	default:
+		return fmt.Sprintf("Instructions for %s %s.", strings.Title(appID), version)
+	}
 }
 
 func openAppStoreSettingsDB(projectRoot string) (*sql.DB, error) {
@@ -162,7 +183,8 @@ func normalizeAppStoreSettings(req appStoreSettingsRequest) (appStoreSettingsFil
 	settings := appStoreSettingsFile{
 		Downloads:       map[string]map[string]string{},
 		Titles:          map[string]map[string]string{},
-		Descriptions:    map[string]map[string]string{},
+		Instructions:    map[string]map[string]string{},
+		Icons:           map[string]map[string]string{},
 		ShowOnDashboard: map[string]map[string]bool{},
 	}
 
@@ -170,19 +192,22 @@ func normalizeAppStoreSettings(req appStoreSettingsRequest) (appStoreSettingsFil
 		validVersions := make(map[string]struct{}, len(baseReleases))
 		defaultURLs := make(map[string]string, len(baseReleases))
 		defaultTitles := make(map[string]string, len(baseReleases))
-		defaultDescriptions := make(map[string]string, len(baseReleases))
+		defaultInstructions := make(map[string]string, len(baseReleases))
 
 		for _, release := range baseReleases {
 			validVersions[release.Version] = struct{}{}
 			defaultURLs[release.Version] = strings.TrimSpace(release.URL)
 			defaultTitles[release.Version] = defaultAppStoreReleaseTitle(appID, release.Version)
-			defaultDescriptions[release.Version] = defaultAppStoreReleaseDescription(appID, release.Version)
+			defaultInstructions[release.Version] = defaultAppStoreReleaseInstructions(appID, release.Version)
 		}
 
 		for version := range validVersions {
 			downloadURL := strings.TrimSpace(valueAt(req.Downloads, appID, version))
 			title := strings.TrimSpace(valueAt(req.Titles, appID, version))
-			description := strings.TrimSpace(valueAt(req.Descriptions, appID, version))
+			instructions := strings.TrimSpace(valueAt(req.Instructions, appID, version))
+			if instructions == "" {
+				instructions = strings.TrimSpace(valueAt(req.Descriptions, appID, version))
+			}
 			showOnDashboard := valueAtBool(req.ShowOnDashboard, appID, version)
 
 			if downloadURL != "" && downloadURL != defaultURLs[version] {
@@ -203,11 +228,22 @@ func normalizeAppStoreSettings(req appStoreSettingsRequest) (appStoreSettingsFil
 				settings.Titles[appID][version] = title
 			}
 
-			if description != "" && description != defaultDescriptions[version] {
-				if settings.Descriptions[appID] == nil {
-					settings.Descriptions[appID] = map[string]string{}
+			if instructions != "" && instructions != defaultInstructions[version] {
+				if settings.Instructions[appID] == nil {
+					settings.Instructions[appID] = map[string]string{}
 				}
-				settings.Descriptions[appID][version] = description
+				settings.Instructions[appID][version] = instructions
+			}
+
+			icon := strings.TrimSpace(valueAt(req.Icons, appID, version))
+			if icon != "" {
+				if !strings.HasPrefix(icon, "data:image/") {
+					return appStoreSettingsFile{}, fmt.Errorf("invalid icon data for %s %s", strings.Title(appID), version)
+				}
+				if settings.Icons[appID] == nil {
+					settings.Icons[appID] = map[string]string{}
+				}
+				settings.Icons[appID][version] = icon
 			}
 
 			if showOnDashboard {
@@ -242,7 +278,8 @@ func loadAppStoreSettingsFromDB(projectRoot string) appStoreSettingsFile {
 	settings := appStoreSettingsFile{
 		Downloads:       map[string]map[string]string{},
 		Titles:          map[string]map[string]string{},
-		Descriptions:    map[string]map[string]string{},
+		Instructions:    map[string]map[string]string{},
+		Icons:           map[string]map[string]string{},
 		ShowOnDashboard: map[string]map[string]bool{},
 	}
 
@@ -254,16 +291,16 @@ func loadAppStoreSettingsFromDB(projectRoot string) appStoreSettingsFile {
 
 	// Cleanup: migrateLegacyAppStoreSettings removal
 
-	rows, err := db.Query(`SELECT app_id, version, download_url, title, description, show_on_dashboard FROM app_store_settings`)
+	rows, err := db.Query(`SELECT app_id, version, download_url, title, description, icon_data, show_on_dashboard FROM app_store_settings`)
 	if err != nil {
 		return settings
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var appID, version, downloadURL, title, description string
+		var appID, version, downloadURL, title, description, iconData string
 		var showOnDashboard int
-		if err := rows.Scan(&appID, &version, &downloadURL, &title, &description, &showOnDashboard); err != nil {
+		if err := rows.Scan(&appID, &version, &downloadURL, &title, &description, &iconData, &showOnDashboard); err != nil {
 			continue
 		}
 
@@ -280,10 +317,16 @@ func loadAppStoreSettingsFromDB(projectRoot string) appStoreSettingsFile {
 			settings.Titles[appID][version] = title
 		}
 		if strings.TrimSpace(description) != "" {
-			if settings.Descriptions[appID] == nil {
-				settings.Descriptions[appID] = map[string]string{}
+			if settings.Instructions[appID] == nil {
+				settings.Instructions[appID] = map[string]string{}
 			}
-			settings.Descriptions[appID][version] = description
+			settings.Instructions[appID][version] = description
+		}
+		if strings.TrimSpace(iconData) != "" {
+			if settings.Icons[appID] == nil {
+				settings.Icons[appID] = map[string]string{}
+			}
+			settings.Icons[appID][version] = iconData
 		}
 		if showOnDashboard != 0 {
 			if settings.ShowOnDashboard[appID] == nil {
@@ -312,22 +355,24 @@ func saveAppStoreSettingsWithDB(db *sql.DB, settings appStoreSettingsFile) error
 		for _, release := range releases {
 			downloadURL := strings.TrimSpace(valueAt(settings.Downloads, appID, release.Version))
 			title := strings.TrimSpace(valueAt(settings.Titles, appID, release.Version))
-			description := strings.TrimSpace(valueAt(settings.Descriptions, appID, release.Version))
+			description := strings.TrimSpace(valueAt(settings.Instructions, appID, release.Version))
+			iconData := strings.TrimSpace(valueAt(settings.Icons, appID, release.Version))
 			showOnDashboard := 0
 			if settings.ShowOnDashboard != nil && settings.ShowOnDashboard[appID] != nil && settings.ShowOnDashboard[appID][release.Version] {
 				showOnDashboard = 1
 			}
 
-			if downloadURL == "" && title == "" && description == "" && showOnDashboard == 0 {
+			if downloadURL == "" && title == "" && description == "" && iconData == "" && showOnDashboard == 0 {
 				continue
 			}
 			if _, err := tx.Exec(
-				`INSERT INTO app_store_settings (app_id, version, download_url, title, description, show_on_dashboard) VALUES (?, ?, ?, ?, ?, ?)`,
+				`INSERT INTO app_store_settings (app_id, version, download_url, title, description, icon_data, show_on_dashboard) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 				appID,
 				release.Version,
 				downloadURL,
 				title,
 				description,
+				iconData,
 				showOnDashboard,
 			); err != nil {
 				_ = tx.Rollback()
@@ -398,14 +443,15 @@ func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreS
 		for i := range baseReleases {
 			version := baseReleases[i].Version
 			group.Releases = append(group.Releases, appStoreSettingsEntry{
-				Version:            version,
-				Title:              strings.TrimSpace(valueAt(saved.Titles, appID, version)),
-				DefaultTitle:       defaultAppStoreReleaseTitle(appID, version),
-				Description:        strings.TrimSpace(valueAt(saved.Descriptions, appID, version)),
-				DefaultDescription: defaultAppStoreReleaseDescription(appID, version),
-				URL:                effectiveReleases[i].URL,
-				DefaultURL:         baseReleases[i].URL,
-				ShowOnDashboard:    valueAtBool(saved.ShowOnDashboard, appID, version),
+				Version:             version,
+				Title:               strings.TrimSpace(valueAt(saved.Titles, appID, version)),
+				DefaultTitle:        defaultAppStoreReleaseTitle(appID, version),
+				Instructions:        strings.TrimSpace(valueAt(saved.Instructions, appID, version)),
+				DefaultInstructions: defaultAppStoreReleaseInstructions(appID, version),
+				Icon:                strings.TrimSpace(valueAt(saved.Icons, appID, version)),
+				URL:                 effectiveReleases[i].URL,
+				DefaultURL:          baseReleases[i].URL,
+				ShowOnDashboard:     valueAtBool(saved.ShowOnDashboard, appID, version),
 			})
 		}
 

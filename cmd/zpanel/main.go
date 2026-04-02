@@ -41,6 +41,7 @@ const (
 	defaultWebsitePHPVersion = "8.4"
 	metricsSampleInterval    = 4 * time.Second
 	metricsHistoryLimit      = 20
+	statusSnapshotTTL        = 12 * time.Second
 )
 
 type appConfig struct {
@@ -59,6 +60,7 @@ type appState struct {
 	websitePort     int
 	processRegistry *processRegistry
 	metrics         *metricsCache
+	statusSnapshot  *statusSnapshotCache
 	appStoreMu      sync.Mutex
 	routingMu       sync.Mutex
 	appJobsMu       sync.Mutex
@@ -117,12 +119,19 @@ type databaseCreateRequest struct {
 	Type string `json:"type"`
 }
 
+type websiteRuntimeStatus struct {
+	ApacheInstalled bool
+	ApacheRunning   bool
+	ApachePort      int
+}
+
 type statusResponse struct {
 	Status             string    `json:"status"`
 	OSLabel            string    `json:"os_label"`
 	UptimeSeconds      uint64    `json:"uptime_seconds"`
 	Websites           int       `json:"websites"`
 	Databases          int       `json:"databases"`
+	LogFiles           int       `json:"log_files"`
 	MaxMemoryMB        uint64    `json:"max_memory_mb"`
 	CPUUsagePercent    uint8     `json:"cpu_usage_percent"`
 	RAMUsedMB          uint64    `json:"ram_used_mb"`
@@ -154,6 +163,18 @@ type metricsCache struct {
 	current systemMetrics
 }
 
+type statusSnapshot struct {
+	Websites  int
+	Databases int
+	LogFiles  int
+	ExpiresAt time.Time
+}
+
+type statusSnapshotCache struct {
+	mu      sync.Mutex
+	current statusSnapshot
+}
+
 func newMetricsCache() *metricsCache {
 	return &metricsCache{
 		current: systemMetrics{
@@ -161,6 +182,10 @@ func newMetricsCache() *metricsCache {
 			NetworkHistoryKBPS: make([]float64, metricsHistoryLimit),
 		},
 	}
+}
+
+func newStatusSnapshotCache() *statusSnapshotCache {
+	return &statusSnapshotCache{}
 }
 
 func (m *metricsCache) get() systemMetrics {
@@ -173,6 +198,31 @@ func (m *metricsCache) set(next systemMetrics) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.current = next
+}
+
+func (c *statusSnapshotCache) get(loader func() (statusSnapshot, error)) (statusSnapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	if !c.current.ExpiresAt.IsZero() && now.Before(c.current.ExpiresAt) {
+		return c.current, nil
+	}
+
+	next, err := loader()
+	if err != nil {
+		return statusSnapshot{}, err
+	}
+
+	next.ExpiresAt = now.Add(statusSnapshotTTL)
+	c.current = next
+	return next, nil
+}
+
+func (c *statusSnapshotCache) invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.current = statusSnapshot{}
 }
 
 type processRegistry struct {
@@ -354,6 +404,7 @@ func main() {
 		maxMemoryMB:     cfg.MaxMemoryMB,
 		processRegistry: newProcessRegistry(),
 		metrics:         newMetricsCache(),
+		statusSnapshot:  newStatusSnapshotCache(),
 		appJobs:         map[string]*appInstallJob{},
 	}
 
@@ -387,7 +438,7 @@ func main() {
 	log.Printf("starting control panel on %s", dashboardURL)
 	log.Printf("serving static assets from Go app")
 	log.Printf("data directory is %s", cfg.BaseDir)
-	state.websitePort = 8081
+	state.websitePort = websiteHTTPPort()
 
 	if err := controller.Start(); err != nil {
 		stop()
@@ -539,6 +590,8 @@ func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 	for i := range apps {
 		appID := apps[i].ID
 		apps[i].VersionTitles = make(map[string]string)
+		apps[i].VersionInstructions = make(map[string]string)
+		apps[i].VersionIcons = make(map[string]string)
 		apps[i].ShowOnDashboardVersions = make(map[string]bool)
 
 		apps[i].ShowOnDashboard = valueAtBool(appStoreSettings.ShowOnDashboard, appID, apps[i].Version)
@@ -580,6 +633,15 @@ func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 				apps[i].VersionTitles[ver] = defaultAppStoreReleaseTitle(appID, ver)
 			}
 
+			if instructions := strings.TrimSpace(valueAt(appStoreSettings.Instructions, appID, ver)); instructions != "" {
+				apps[i].VersionInstructions[ver] = instructions
+			} else {
+				apps[i].VersionInstructions[ver] = defaultAppStoreReleaseInstructions(appID, ver)
+			}
+			if iconData := strings.TrimSpace(valueAt(appStoreSettings.Icons, appID, ver)); iconData != "" {
+				apps[i].VersionIcons[ver] = iconData
+			}
+
 			isShown := valueAtBool(appStoreSettings.ShowOnDashboard, appID, ver)
 			if legacyValue, ok := dashboardSettings[appID+":"+ver]; ok {
 				isShown = legacyValue || isShown
@@ -597,6 +659,12 @@ func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 			apps[i].Name = title
 		} else {
 			apps[i].Name = defaultAppStoreReleaseTitle(appID, version)
+		}
+		if instructions, ok := apps[i].VersionInstructions[version]; ok && strings.TrimSpace(instructions) != "" {
+			apps[i].Description = instructions
+		}
+		if iconData, ok := apps[i].VersionIcons[version]; ok && strings.TrimSpace(iconData) != "" {
+			apps[i].Icon = iconData
 		}
 
 		if appID == "php" {
@@ -952,13 +1020,28 @@ func (s *appState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	websites, err := countWebsites(s.appRoot)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	snapshot, err := s.statusSnapshot.get(func() (statusSnapshot, error) {
+		websites, err := countWebsites(s.appRoot)
+		if err != nil {
+			return statusSnapshot{}, err
+		}
 
-	databases, err := countRows(s.db, "databases")
+		databases, err := countRows(s.db, "databases")
+		if err != nil {
+			return statusSnapshot{}, err
+		}
+
+		logFiles, err := countLogFiles(s.appRoot)
+		if err != nil {
+			return statusSnapshot{}, err
+		}
+
+		return statusSnapshot{
+			Websites:  websites,
+			Databases: databases,
+			LogFiles:  logFiles,
+		}, nil
+	})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -969,8 +1052,9 @@ func (s *appState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Status:             "running",
 		OSLabel:            metrics.OSLabel,
 		UptimeSeconds:      metrics.UptimeSeconds,
-		Websites:           websites,
-		Databases:          databases,
+		Websites:           snapshot.Websites,
+		Databases:          snapshot.Databases,
+		LogFiles:           snapshot.LogFiles,
 		MaxMemoryMB:        s.maxMemoryMB,
 		CPUUsagePercent:    metrics.CPUUsagePercent,
 		RAMUsedMB:          metrics.RAMUsedMB,
@@ -995,7 +1079,9 @@ func (s *appState) handleListWebsites(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.decorateWebsiteRecords(items))
+
+	runtimeStatus := s.detectWebsiteRuntimeStatus()
+	writeJSON(w, http.StatusOK, s.decorateWebsiteRecords(items, runtimeStatus))
 }
 
 func (s *appState) handleCreateWebsite(w http.ResponseWriter, r *http.Request) {
@@ -1017,7 +1103,8 @@ func (s *appState) handleCreateWebsite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	record.Message = "Website created. Applying routing in background."
-	writeJSON(w, http.StatusOK, s.decorateWebsiteRecord(record))
+	s.statusSnapshot.invalidate()
+	writeJSON(w, http.StatusOK, s.decorateWebsiteRecord(record, s.detectWebsiteRuntimeStatus()))
 
 	go func(domain string) {
 		s.routingMu.Lock()
@@ -1052,7 +1139,14 @@ func (s *appState) handleDeleteWebsite(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Domain = strings.TrimSpace(req.Domain)
+	if req.Domain == "" {
+		writeJSONError(w, http.StatusBadRequest, "domain is required")
+		return
+	}
 
+	s.routingMu.Lock()
+	defer s.routingMu.Unlock()
 	if err := s.deleteWebsite(req.Domain); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1062,6 +1156,7 @@ func (s *appState) handleDeleteWebsite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.statusSnapshot.invalidate()
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Website deleted successfully."})
 }
 
@@ -1076,6 +1171,20 @@ func (s *appState) handleWebsiteRuntimeChange(w http.ResponseWriter, r *http.Req
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Domain = strings.TrimSpace(req.Domain)
+	if req.Domain == "" {
+		writeJSONError(w, http.StatusBadRequest, "domain is required")
+		return
+	}
+
+	s.routingMu.Lock()
+	defer s.routingMu.Unlock()
+	if status == "running" {
+		if err := s.validateApacheRunningForWebsite(); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	record, err := updateWebsiteRuntime(s.appRoot, req.Domain, status)
 	if err != nil {
@@ -1086,7 +1195,9 @@ func (s *appState) handleWebsiteRuntimeChange(w http.ResponseWriter, r *http.Req
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.decorateWebsiteRecord(record))
+
+	runtimeStatus := s.detectWebsiteRuntimeStatus()
+	writeJSON(w, http.StatusOK, s.decorateWebsiteRecord(record, runtimeStatus))
 }
 
 func (s *appState) handleListDatabases(w http.ResponseWriter, r *http.Request) {
@@ -1120,6 +1231,7 @@ func (s *appState) handleCreateDatabase(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.statusSnapshot.invalidate()
 	writeJSON(w, http.StatusOK, record)
 }
 
@@ -1400,28 +1512,65 @@ func startWebsiteController(state *appState) (*serverController, error) {
 	return nil, errors.New(strings.Join(failures, "; "))
 }
 
-func (s *appState) decorateWebsiteRecord(item websiteRecord) websiteRecord {
+func (s *appState) decorateWebsiteRecord(item websiteRecord, runtimeStatus websiteRuntimeStatus) websiteRecord {
 	item.PreviewURL = "/preview?domain=" + item.Domain
-	item.StatusLabel = formatWebsiteStatus(item.Status)
-	if s.websitePort == 0 {
+	item.Status, item.StatusLabel = resolveWebsiteDisplayStatus(item.Status, runtimeStatus)
+	port := runtimeStatus.ApachePort
+	if port == 0 {
+		port = s.websitePort
+	}
+
+	if port == 0 || item.Status != "running" {
 		return item
 	}
 
-	if s.websitePort == 80 {
+	if port == 80 {
 		item.URL = "http://" + item.Domain + "/"
 		return item
 	}
 
-	item.URL = fmt.Sprintf("http://%s:%d/", item.Domain, s.websitePort)
+	item.URL = fmt.Sprintf("http://%s:%d/", item.Domain, port)
 	return item
 }
 
-func (s *appState) decorateWebsiteRecords(items []websiteRecord) []websiteRecord {
+func (s *appState) decorateWebsiteRecords(items []websiteRecord, runtimeStatus websiteRuntimeStatus) []websiteRecord {
 	out := make([]websiteRecord, 0, len(items))
 	for _, item := range items {
-		out = append(out, s.decorateWebsiteRecord(item))
+		out = append(out, s.decorateWebsiteRecord(item, runtimeStatus))
 	}
 	return out
+}
+
+func (s *appState) detectWebsiteRuntimeStatus() websiteRuntimeStatus {
+	manager := newRuntimeManager(s.appRoot)
+	response, err := manager.Status()
+	if err != nil {
+		return websiteRuntimeStatus{}
+	}
+
+	for _, app := range response.Apps {
+		if strings.EqualFold(app.ID, "apache") {
+			port, _ := strconv.Atoi(strings.TrimSpace(app.Port))
+			return websiteRuntimeStatus{
+				ApacheInstalled: app.Installed,
+				ApacheRunning:   app.Running,
+				ApachePort:      port,
+			}
+		}
+	}
+
+	return websiteRuntimeStatus{}
+}
+
+func (s *appState) validateApacheRunningForWebsite() error {
+	runtimeStatus := s.detectWebsiteRuntimeStatus()
+	if !runtimeStatus.ApacheInstalled {
+		return errors.New("apache is not installed. Install Apache in App Store first")
+	}
+	if runtimeStatus.ApacheRunning {
+		return nil
+	}
+	return errors.New("apache is not running. Start Apache in App Store before starting this site")
 }
 
 func (s *appState) deleteWebsite(domain string) error {
@@ -1467,6 +1616,53 @@ func countWebsites(appRoot string) (int, error) {
 	}
 
 	return len(seen), nil
+}
+
+func countLogFiles(appRoot string) (int, error) {
+	logRoots := []string{
+		filepath.Join(appRoot, "data", "runtime"),
+		filepath.Join(appRoot, "logs"),
+	}
+
+	seen := make(map[string]struct{}, 8)
+	total := 0
+
+	for _, root := range logRoots {
+		root = filepath.Clean(root)
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+
+		info, err := os.Stat(root)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return 0, err
+		}
+		if !info.IsDir() {
+			continue
+		}
+
+		err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if strings.EqualFold(filepath.Ext(entry.Name()), ".log") {
+				total++
+			}
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return total, nil
 }
 
 func getSiteConfigRoot(appRoot string) string {
@@ -1549,6 +1745,24 @@ func formatWebsiteStatus(status string) string {
 		return "Stopped"
 	default:
 		return "Created"
+	}
+}
+
+func resolveWebsiteDisplayStatus(configStatus string, runtimeStatus websiteRuntimeStatus) (string, string) {
+	status := strings.ToLower(strings.TrimSpace(configStatus))
+	switch status {
+	case "running":
+		if !runtimeStatus.ApacheInstalled {
+			return "stopped", "Apache not installed"
+		}
+		if !runtimeStatus.ApacheRunning {
+			return "stopped", "Apache stopped"
+		}
+		return "running", "Running"
+	case "stopped":
+		return "stopped", "Stopped"
+	default:
+		return status, formatWebsiteStatus(status)
 	}
 }
 
