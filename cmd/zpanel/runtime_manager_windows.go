@@ -885,8 +885,13 @@ func (m *windowsRuntimeManager) configurePHPWithExtensions(version string, enabl
 		updated += "\r\nextension_dir = \"" + extensionDir + "\"\r\n"
 	}
 	updated = m.applyPHPExtensions(version, updated, enabled)
+	timezone := defaultPanelTimezone
+	if settings, err := loadPanelSettingsAtProjectRoot(m.projectRoot); err == nil && strings.TrimSpace(settings.Timezone) != "" {
+		timezone = settings.Timezone
+	}
+	updated = regexp.MustCompile(`(?mi)^;?\s*date\.timezone\s*=.*$`).ReplaceAllString(updated, "date.timezone = "+timezone)
 	if !regexp.MustCompile(`(?m)^date\.timezone\s*=`).MatchString(updated) {
-		updated += "\r\ndate.timezone = UTC\r\n"
+		updated += "\r\ndate.timezone = " + timezone + "\r\n"
 	}
 	if err := os.WriteFile(m.phpIniPath(version), []byte(updated), 0o644); err != nil {
 		return err

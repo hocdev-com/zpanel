@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -156,8 +155,8 @@ func defaultAppStoreReleaseInstructions(appID string, version string) string {
 }
 
 func openAppStoreSettingsDB(projectRoot string) (*sql.DB, error) {
-	dbPath := appStoreSettingsDBPath(projectRoot)
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	dbPath, err := ensureBundledPanelDB(filepath.Dir(appStoreSettingsDBPath(projectRoot)))
+	if err != nil {
 		return nil, err
 	}
 

@@ -12,6 +12,7 @@ set "CMD_DIR=%ROOT%\cmd\zpanel"
 set "BUILD_DIR=%ROOT%\build"
 set "CACHE_DIR=%ROOT%\.gocache"
 set "ICON_PATH=%ROOT%\assets\app.ico"
+set "FAVICON_ICON_CMD=%ROOT%\cmd\faviconico"
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%" >nul 2>&1
 if not exist "%CACHE_DIR%" mkdir "%CACHE_DIR%" >nul 2>&1
@@ -108,11 +109,21 @@ if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%" >nul 2>&1
 
 set "LDFLAGS=-X main.version=%VERSION%"
 if /i "%GOOS_VALUE%"=="windows" set "LDFLAGS=-H=windowsgui !LDFLAGS!"
+set "GOCACHE=%CACHE_DIR%"
+
+if /i "%EMBED_ICON%"=="true" (
+    if /i "%OS%"=="Windows_NT" (
+        go run "%FAVICON_ICON_CMD%" -out "%ICON_PATH%"
+        if errorlevel 1 (
+            echo favicon icon generation failed for %ICON_PATH%
+            exit /b 1
+        )
+    )
+)
 
 echo Building %GOOS_VALUE%/%GOARCH_VALUE% ^> %OUTPUT_PATH%
 set "GOOS=%GOOS_VALUE%"
 set "GOARCH=%GOARCH_VALUE%"
-set "GOCACHE=%CACHE_DIR%"
 go build -trimpath -ldflags "!LDFLAGS!" -o "%OUTPUT_PATH%" "%CMD_DIR%"
 if errorlevel 1 (
     echo go build failed for %GOOS_VALUE%/%GOARCH_VALUE%

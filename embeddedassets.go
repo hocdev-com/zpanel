@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed static/*
+//go:embed static/* data/panel.db
 var bundled embed.FS
 
 func StaticFS() fs.FS {
@@ -14,4 +14,12 @@ func StaticFS() fs.FS {
 		panic(err)
 	}
 	return sub
+}
+
+func BundledPanelDB() []byte {
+	content, err := bundled.ReadFile("data/panel.db")
+	if err != nil {
+		panic(err)
+	}
+	return content
 }

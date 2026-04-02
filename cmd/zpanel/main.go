@@ -39,6 +39,9 @@ var version = "0.1.1"
 
 const (
 	defaultWebsitePHPVersion = "8.4"
+	defaultPanelAlias        = "zPanel"
+	defaultPanelTimezone     = "UTC"
+	defaultSiteFolder        = "www"
 	metricsSampleInterval    = 4 * time.Second
 	metricsHistoryLimit      = 20
 	statusSnapshotTTL        = 12 * time.Second
@@ -49,6 +52,31 @@ type appConfig struct {
 	BaseDir     string
 	MaxMemoryMB uint64
 	LogLevel    string
+}
+
+type panelSettings struct {
+	Alias             string `json:"alias"`
+	Timezone          string `json:"timezone"`
+	Language          string `json:"language"`
+	DefaultSiteFolder string `json:"default_site_folder"`
+	ResolvedSiteRoot  string `json:"resolved_site_root,omitempty"`
+	ServerTime        string `json:"server_time,omitempty"`
+	Message           string `json:"message,omitempty"`
+}
+
+type folderBrowserItem struct {
+	Name             string `json:"name"`
+	Path             string `json:"path"`
+	ModifiedAt       string `json:"modified_at,omitempty"`
+	PermissionsOwner string `json:"permissions_owner,omitempty"`
+}
+
+type folderBrowserResponse struct {
+	CurrentPath string              `json:"current_path"`
+	DisplayPath string              `json:"display_path"`
+	ParentPath  string              `json:"parent_path,omitempty"`
+	Roots       []folderBrowserItem `json:"roots,omitempty"`
+	Directories []folderBrowserItem `json:"directories"`
 }
 
 type appState struct {
@@ -396,6 +424,14 @@ func main() {
 	}
 	defer db.Close()
 
+	settings, err := loadPanelSettings(db)
+	if err != nil {
+		log.Fatalf("failed to load panel settings: %v", err)
+	}
+	if err := ensureDefaultSiteRootExists(appRoot, settings); err != nil {
+		log.Fatalf("failed to prepare default site folder: %v", err)
+	}
+
 	state := &appState{
 		db:              db,
 		appRoot:         appRoot,
@@ -514,7 +550,10 @@ func loadConfig(path string) (appConfig, error) {
 }
 
 func initDB(baseDir string) (*sql.DB, error) {
-	dbPath := filepath.Join(baseDir, "panel.db")
+	dbPath, err := ensureBundledPanelDB(baseDir)
+	if err != nil {
+		return nil, err
+	}
 	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000"
 
 	db, err := sql.Open("sqlite", dsn)
@@ -547,6 +586,10 @@ func initDB(baseDir string) (*sql.DB, error) {
 			setting_key TEXT NOT NULL PRIMARY KEY,
 			enabled INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS panel_settings (
+			setting_key TEXT NOT NULL PRIMARY KEY,
+			setting_value TEXT NOT NULL
+		)`,
 		`INSERT INTO services (name, status) VALUES ('nginx', 'stopped') ON CONFLICT(name) DO NOTHING`,
 		`INSERT INTO services (name, status) VALUES ('mysql', 'stopped') ON CONFLICT(name) DO NOTHING`,
 		`INSERT INTO services (name, status) VALUES ('node', 'stopped') ON CONFLICT(name) DO NOTHING`,
@@ -562,6 +605,455 @@ func initDB(baseDir string) (*sql.DB, error) {
 	return db, nil
 }
 
+func defaultPanelSettings() panelSettings {
+	return panelSettings{
+		Alias:             defaultPanelAlias,
+		Timezone:          defaultPanelTimezone,
+		Language:          "en",
+		DefaultSiteFolder: defaultSiteFolder,
+	}
+}
+
+func ensurePanelSettingsTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS panel_settings (
+		setting_key TEXT NOT NULL PRIMARY KEY,
+		setting_value TEXT NOT NULL
+	)`)
+	return err
+}
+
+func normalizePanelSettings(input panelSettings) (panelSettings, error) {
+	settings := defaultPanelSettings()
+
+	if alias := strings.TrimSpace(input.Alias); alias != "" {
+		settings.Alias = alias
+	}
+
+	if timezone := strings.TrimSpace(input.Timezone); timezone != "" {
+		if _, err := time.LoadLocation(timezone); err != nil {
+			return panelSettings{}, fmt.Errorf("invalid timezone")
+		}
+		settings.Timezone = timezone
+	}
+
+	if language := strings.ToLower(strings.TrimSpace(input.Language)); language != "" {
+		switch language {
+		case "en", "vi":
+			settings.Language = language
+		default:
+			return panelSettings{}, fmt.Errorf("invalid language")
+		}
+	}
+
+	folder, err := cleanDefaultSiteFolderValue(input.DefaultSiteFolder)
+	if err != nil {
+		return panelSettings{}, err
+	}
+	settings.DefaultSiteFolder = folder
+
+	return settings, nil
+}
+
+func cleanDefaultSiteFolderValue(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return defaultSiteFolder, nil
+	}
+	if value == "." || value == "/" || value == `\` {
+		return "/", nil
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(value))
+	if cleaned == "." || cleaned == "" {
+		return "/", nil
+	}
+
+	if filepath.IsAbs(cleaned) {
+		if isFilesystemRoot(cleaned) {
+			return "", fmt.Errorf("default site folder cannot be a drive root")
+		}
+		return filepath.ToSlash(cleaned), nil
+	}
+
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("default site folder must stay inside the panel directory or use an absolute path")
+	}
+
+	return filepath.ToSlash(cleaned), nil
+}
+
+func isFilesystemRoot(pathValue string) bool {
+	cleaned := filepath.Clean(pathValue)
+	volume := filepath.VolumeName(cleaned)
+	rest := strings.TrimPrefix(cleaned, volume)
+	rest = strings.Trim(rest, `\/`)
+	return rest == ""
+}
+
+func resolveDefaultSiteRoot(appRoot string, settings panelSettings) string {
+	rawFolder := strings.TrimSpace(settings.DefaultSiteFolder)
+	if rawFolder == "" {
+		rawFolder = defaultSiteFolder
+	}
+	if rawFolder == "/" || rawFolder == "." || rawFolder == `\` {
+		return filepath.Clean(appRoot)
+	}
+
+	folder := filepath.FromSlash(rawFolder)
+	if folder == "" {
+		folder = defaultSiteFolder
+	}
+	if filepath.IsAbs(folder) {
+		return filepath.Clean(folder)
+	}
+	return filepath.Join(appRoot, folder)
+}
+
+func ensureDefaultSiteRootExists(appRoot string, settings panelSettings) error {
+	return os.MkdirAll(resolveDefaultSiteRoot(appRoot, settings), 0o755)
+}
+
+func displaySiteFolderValue(appRoot string, rootPath string) string {
+	cleanRoot := filepath.Clean(rootPath)
+	relative, err := filepath.Rel(appRoot, cleanRoot)
+	if err == nil && relative != "." && relative != "" && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && relative != ".." {
+		return filepath.ToSlash(relative)
+	}
+	if cleanRoot == filepath.Clean(appRoot) {
+		return "/"
+	}
+	return filepath.ToSlash(cleanRoot)
+}
+
+func nearestExistingDirectory(pathValue string, fallback string) string {
+	candidate := filepath.Clean(pathValue)
+	for {
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate
+		}
+
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			break
+		}
+		candidate = parent
+	}
+
+	fallback = filepath.Clean(fallback)
+	if info, err := os.Stat(fallback); err == nil && info.IsDir() {
+		return fallback
+	}
+	return filepath.Clean(".")
+}
+
+func resolveFolderBrowserPath(appRoot string, value string) (string, error) {
+	candidate := strings.TrimSpace(value)
+	if candidate == "" {
+		return filepath.Clean(appRoot), nil
+	}
+	if candidate == "." || candidate == "/" || candidate == `\` {
+		return filepath.Clean(appRoot), nil
+	}
+
+	candidate = filepath.Clean(filepath.FromSlash(candidate))
+	if filepath.IsAbs(candidate) {
+		return nearestExistingDirectory(candidate, appRoot), nil
+	}
+
+	cleaned, err := cleanDefaultSiteFolderValue(candidate)
+	if err != nil {
+		return "", err
+	}
+	resolved := resolveDefaultSiteRoot(appRoot, panelSettings{DefaultSiteFolder: cleaned})
+	return nearestExistingDirectory(resolved, appRoot), nil
+}
+
+func buildFolderBrowserResponse(appRoot string, currentPath string) (folderBrowserResponse, error) {
+	resolved, err := resolveFolderBrowserPath(appRoot, currentPath)
+	if err != nil {
+		return folderBrowserResponse{}, err
+	}
+
+	entries, err := os.ReadDir(resolved)
+	if err != nil {
+		return folderBrowserResponse{}, err
+	}
+
+	directories := make([]folderBrowserItem, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		childPath := filepath.Join(resolved, entry.Name())
+		info, statErr := entry.Info()
+		modifiedAt := ""
+		permissionsOwner := ""
+		if statErr == nil {
+			modifiedAt = info.ModTime().Format("2006-01-02 15:04:05")
+			owner := strings.TrimSpace(os.Getenv("USERNAME"))
+			if owner == "" {
+				owner = "local"
+			}
+			permissionsOwner = fmt.Sprintf("%03o / %s", info.Mode().Perm(), owner)
+		}
+		directories = append(directories, folderBrowserItem{
+			Name:             entry.Name(),
+			Path:             filepath.Clean(childPath),
+			ModifiedAt:       modifiedAt,
+			PermissionsOwner: permissionsOwner,
+		})
+	}
+	sort.Slice(directories, func(i, j int) bool {
+		return strings.ToLower(directories[i].Name) < strings.ToLower(directories[j].Name)
+	})
+
+	parentPath := ""
+	parentCandidate := filepath.Dir(resolved)
+	if parentCandidate != resolved {
+		parentPath = parentCandidate
+	}
+
+	return folderBrowserResponse{
+		CurrentPath: filepath.Clean(resolved),
+		DisplayPath: displaySiteFolderValue(appRoot, resolved),
+		ParentPath:  parentPath,
+		Roots:       availableFolderRoots(appRoot, resolved),
+		Directories: directories,
+	}, nil
+}
+
+func (s *appState) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		CurrentPath string `json:"current_path"`
+		Name        string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	basePath, err := resolveFolderBrowserPath(s.appRoot, req.CurrentPath)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		writeJSONError(w, http.StatusBadRequest, "folder name is required")
+		return
+	}
+	if strings.ContainsAny(name, `<>:"/\|?*`) {
+		writeJSONError(w, http.StatusBadRequest, "folder name contains invalid characters")
+		return
+	}
+
+	targetPath := filepath.Join(basePath, name)
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	payload, err := buildFolderBrowserResponse(s.appRoot, basePath)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func availableFolderRoots(appRoot string, currentPath string) []folderBrowserItem {
+	roots := []folderBrowserItem{{
+		Name: "Project",
+		Path: filepath.Clean(appRoot),
+	}}
+
+	seen := map[string]struct{}{
+		filepath.Clean(appRoot): {},
+	}
+
+	currentVolume := filepath.VolumeName(filepath.Clean(currentPath))
+	if currentVolume != "" {
+		driveRoot := currentVolume + `\`
+		cleanRoot := filepath.Clean(driveRoot)
+		if _, exists := seen[cleanRoot]; !exists {
+			roots = append(roots, folderBrowserItem{Name: cleanRoot, Path: cleanRoot})
+			seen[cleanRoot] = struct{}{}
+		}
+	}
+
+	for letter := 'C'; letter <= 'Z'; letter++ {
+		driveRoot := fmt.Sprintf("%c:\\", letter)
+		if _, err := os.Stat(driveRoot); err != nil {
+			continue
+		}
+		cleanRoot := filepath.Clean(driveRoot)
+		if _, exists := seen[cleanRoot]; exists {
+			continue
+		}
+		roots = append(roots, folderBrowserItem{Name: cleanRoot, Path: cleanRoot})
+		seen[cleanRoot] = struct{}{}
+	}
+
+	return roots
+}
+
+func withPanelSettingsMetadata(appRoot string, settings panelSettings) panelSettings {
+	output := settings
+	location, err := time.LoadLocation(settings.Timezone)
+	if err != nil {
+		location = time.UTC
+		output.Timezone = defaultPanelTimezone
+	}
+	output.ResolvedSiteRoot = resolveDefaultSiteRoot(appRoot, output)
+	output.ServerTime = time.Now().In(location).Format("2006-01-02 15:04:05 MST")
+	return output
+}
+
+func loadPanelSettings(db *sql.DB) (panelSettings, error) {
+	settings := defaultPanelSettings()
+	if err := ensurePanelSettingsTable(db); err != nil {
+		return settings, err
+	}
+
+	rows, err := db.Query(`SELECT setting_key, setting_value FROM panel_settings`)
+	if err != nil {
+		return settings, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key string
+		var value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return settings, err
+		}
+		switch strings.TrimSpace(key) {
+		case "alias":
+			settings.Alias = strings.TrimSpace(value)
+		case "timezone":
+			settings.Timezone = strings.TrimSpace(value)
+		case "language":
+			settings.Language = strings.TrimSpace(value)
+		case "default_site_folder":
+			settings.DefaultSiteFolder = strings.TrimSpace(value)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return settings, err
+	}
+
+	return normalizePanelSettings(settings)
+}
+
+func savePanelSettings(db *sql.DB, input panelSettings) (panelSettings, error) {
+	settings, err := normalizePanelSettings(input)
+	if err != nil {
+		return panelSettings{}, err
+	}
+	if err := ensurePanelSettingsTable(db); err != nil {
+		return panelSettings{}, err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return panelSettings{}, err
+	}
+	defer tx.Rollback()
+
+	for key, value := range map[string]string{
+		"alias":               settings.Alias,
+		"timezone":            settings.Timezone,
+		"language":            settings.Language,
+		"default_site_folder": settings.DefaultSiteFolder,
+	} {
+		if _, err := tx.Exec(
+			`INSERT INTO panel_settings (setting_key, setting_value) VALUES (?, ?)
+			 ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value`,
+			key,
+			value,
+		); err != nil {
+			return panelSettings{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return panelSettings{}, err
+	}
+
+	return settings, nil
+}
+
+func openPanelDB(projectRoot string) (*sql.DB, error) {
+	dbPath, err := ensureBundledPanelDB(filepath.Dir(appStoreSettingsDBPath(projectRoot)))
+	if err != nil {
+		return nil, err
+	}
+
+	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	if err := ensurePanelSettingsTable(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+func loadPanelSettingsAtProjectRoot(projectRoot string) (panelSettings, error) {
+	db, err := openPanelDB(projectRoot)
+	if err != nil {
+		return defaultPanelSettings(), err
+	}
+	defer db.Close()
+
+	return loadPanelSettings(db)
+}
+
+func ensureBundledPanelDB(baseDir string) (string, error) {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return "", err
+	}
+
+	dbPath := filepath.Join(baseDir, "panel.db")
+	info, err := os.Stat(dbPath)
+	switch {
+	case err == nil && info.Size() > 0:
+		return dbPath, nil
+	case err == nil:
+		log.Printf("panel database at %s is empty, restoring bundled copy", dbPath)
+	case errors.Is(err, os.ErrNotExist):
+		log.Printf("initializing panel database from bundled data into %s", dbPath)
+	case err != nil:
+		return "", err
+	}
+
+	content := embeddedassets.BundledPanelDB()
+	if len(content) == 0 {
+		return "", fmt.Errorf("bundled panel database is empty")
+	}
+
+	if err := os.WriteFile(dbPath, content, 0o644); err != nil {
+		return "", err
+	}
+
+	return dbPath, nil
+}
+
 func registerRoutes(mux *http.ServeMux, state *appState) {
 	mux.HandleFunc("/api/status", state.handleStatus)
 	mux.HandleFunc("/api/apps", state.handleListApps)
@@ -571,6 +1063,9 @@ func registerRoutes(mux *http.ServeMux, state *appState) {
 	mux.HandleFunc("/api/apps/open-folder", state.handleOpenFolder)
 	mux.HandleFunc("/api/apps/setting", state.handleAppSetting)
 	mux.HandleFunc("/api/settings/app-store", state.handleAppStoreSettings)
+	mux.HandleFunc("/api/settings/panel", state.handlePanelSettings)
+	mux.HandleFunc("/api/settings/folder-browser", state.handleFolderBrowser)
+	mux.HandleFunc("/api/settings/folder-browser/create", state.handleCreateFolder)
 	mux.HandleFunc("/api/websites", state.handleListWebsites)
 	mux.HandleFunc("/api/website/create", state.handleCreateWebsite)
 	mux.HandleFunc("/api/website/start", state.handleStartWebsite)
@@ -579,6 +1074,8 @@ func registerRoutes(mux *http.ServeMux, state *appState) {
 	mux.HandleFunc("/api/databases", state.handleListDatabases)
 	mux.HandleFunc("/api/database/create", state.handleCreateDatabase)
 	mux.HandleFunc("/preview", state.handleWebsitePreview)
+	mux.HandleFunc("/favicon.svg", state.serveFavicon)
+	mux.HandleFunc("/favicon.ico", state.serveFavicon)
 	mux.HandleFunc("/static/", state.serveStaticAsset)
 	mux.HandleFunc("/", state.serveIndex)
 }
@@ -987,8 +1484,96 @@ func (s *appState) handleSaveAppSetting(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *appState) handlePanelSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		settings, err := loadPanelSettings(s.db)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, withPanelSettingsMetadata(s.appRoot, settings))
+	case http.MethodPost:
+		var req panelSettings
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		settings, err := savePanelSettings(s.db, req)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ensureDefaultSiteRootExists(s.appRoot, settings); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		response := withPanelSettingsMetadata(s.appRoot, settings)
+		response.Message = "Panel settings saved."
+		writeJSON(w, http.StatusOK, response)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *appState) handleFolderBrowser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	settings, err := loadPanelSettings(s.db)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	currentPath := resolveDefaultSiteRoot(s.appRoot, settings)
+	if candidate := strings.TrimSpace(r.URL.Query().Get("path")); candidate != "" {
+		resolved, err := resolveFolderBrowserPath(s.appRoot, candidate)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		currentPath = resolved
+	} else {
+		currentPath = nearestExistingDirectory(currentPath, s.appRoot)
+	}
+
+	payload, err := buildFolderBrowserResponse(s.appRoot, currentPath)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (s *appState) serveStaticAsset(w http.ResponseWriter, r *http.Request) {
 	http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))).ServeHTTP(w, r)
+}
+
+func (s *appState) serveFavicon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path == "/favicon.ico" {
+		http.Redirect(w, r, "/favicon.svg", http.StatusPermanentRedirect)
+		return
+	}
+
+	content, err := fs.ReadFile(s.staticFS, "favicon.svg")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(content)
 }
 
 func (s *appState) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -1096,7 +1681,13 @@ func (s *appState) handleCreateWebsite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, err := createWebsite(s.appRoot, req)
+	settings, err := loadPanelSettings(s.db)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	record, err := createWebsite(s.appRoot, settings, req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1256,7 +1847,7 @@ func (s *appState) handleWebsitePreview(w http.ResponseWriter, r *http.Request) 
 	s.serveWebsiteRecord(w, r, record)
 }
 
-func createWebsite(appRoot string, req websiteCreateRequest) (websiteRecord, error) {
+func createWebsite(appRoot string, settings panelSettings, req websiteCreateRequest) (websiteRecord, error) {
 	domain := strings.TrimSpace(req.Domain)
 	if domain == "" {
 		return websiteRecord{}, errors.New("domain is required")
@@ -1266,7 +1857,7 @@ func createWebsite(appRoot string, req websiteCreateRequest) (websiteRecord, err
 		return websiteRecord{}, errors.New("invalid domain name")
 	}
 
-	pathValue := filepath.Join(appRoot, "www", domain)
+	pathValue := filepath.Join(resolveDefaultSiteRoot(appRoot, settings), domain)
 	if info, err := os.Stat(pathValue); err == nil && info.IsDir() {
 		return websiteRecord{}, errors.New("website already exists")
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {

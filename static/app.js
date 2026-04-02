@@ -3,6 +3,17 @@ const databaseListEl = document.getElementById("database-list");
 const appStoreListEl = document.getElementById("app-store-list");
 const appStoreSettingsFormEl = document.getElementById("app-store-settings-form");
 const appStoreSettingsPathEl = document.getElementById("app-store-settings-path");
+const panelSettingsFormEl = document.getElementById("panel-settings-form");
+const folderBrowserModalEl = document.getElementById("folder-browser-modal");
+const folderBrowserBreadcrumbsEl = document.getElementById("folder-browser-breadcrumbs");
+const folderBrowserRootsEl = document.getElementById("folder-browser-roots");
+const folderBrowserListEl = document.getElementById("folder-browser-list");
+const folderBrowserUpEl = document.getElementById("folder-browser-up");
+const folderBrowserRefreshEl = document.getElementById("folder-browser-refresh");
+const folderBrowserSearchEl = document.getElementById("folder-browser-search");
+const folderBrowserSelectionEl = document.getElementById("folder-browser-selection");
+const folderBrowserSelectEl = document.getElementById("folder-browser-select");
+const folderBrowserNewDirectoryEl = document.getElementById("folder-browser-new-directory");
 const sectionTitleEl = document.getElementById("section-title");
 const sectionCopyEl = document.getElementById("section-copy");
 const toastStackEl = document.getElementById("toast-stack");
@@ -16,15 +27,60 @@ const sidebarEl = document.getElementById("sidebar");
 const sidebarToggleEl = document.getElementById("sidebar-toggle");
 const sidebarCloseEl = document.getElementById("sidebar-close");
 const sidebarBackdropEl = document.getElementById("sidebar-backdrop");
+const brandAliasEl = document.getElementById("brand-alias");
 const brandPanelHostEl = document.getElementById("brand-panel-host");
 const brandLogCountEl = document.getElementById("brand-log-count");
+const websitePathHintEl = document.getElementById("website-path-hint");
 const WEBSITE_CACHE_KEY = "zpanel:websites";
+const DEFAULT_PANEL_ALIAS = "zPanel";
+const DEFAULT_PANEL_TIMEZONE = "UTC";
+const DEFAULT_SITE_FOLDER = "www";
+const DEFAULT_PANEL_LANGUAGE = "en";
+const FALLBACK_TIMEZONES = [
+    "UTC",
+    "Asia/Bangkok",
+    "Asia/Ho_Chi_Minh",
+    "Asia/Jakarta",
+    "Asia/Singapore",
+    "Asia/Hong_Kong",
+    "Asia/Shanghai",
+    "Asia/Taipei",
+    "Asia/Tokyo",
+    "Asia/Seoul",
+    "Asia/Dubai",
+    "Asia/Kolkata",
+    "Australia/Sydney",
+    "Pacific/Auckland",
+    "Europe/London",
+    "Europe/Dublin",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Europe/Madrid",
+    "Europe/Rome",
+    "Europe/Amsterdam",
+    "Europe/Zurich",
+    "Europe/Moscow",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Phoenix",
+    "America/Toronto",
+    "America/Vancouver",
+    "America/Sao_Paulo",
+    "America/Mexico_City",
+];
+const LANGUAGE_OPTIONS = [
+    { value: "en", label: "English" },
+    { value: "vi", label: "Tiếng Việt" },
+];
 const STATUS_REFRESH_VISIBLE_MS = 5000;
 const STATUS_REFRESH_HIDDEN_MS = 60000;
 const STATUS_REFRESH_VISIBLE_LITE_MS = 15000;
 const STATUS_REFRESH_HIDDEN_LITE_MS = 120000;
 let statusRefreshTimer = null;
 let statusRefreshInFlight = null;
+let appStoreSettingsInFlight = null;
 let collectionRefreshInFlight = {
     apps: null,
     settings: null,
@@ -58,6 +114,21 @@ let lastDatabaseSignature = "";
 let lastSoftwareSnapshotSignature = "";
 let lastPHPVersionsSignature = "";
 let lastNetworkChartSignature = "";
+let panelSettingsState = {
+    alias: DEFAULT_PANEL_ALIAS,
+    timezone: DEFAULT_PANEL_TIMEZONE,
+    language: DEFAULT_PANEL_LANGUAGE,
+    default_site_folder: DEFAULT_SITE_FOLDER,
+    resolved_site_root: "",
+    server_time: "",
+};
+let folderBrowserState = {
+    current_path: "",
+    display_path: "",
+    parent_path: "",
+    roots: [],
+    directories: [],
+};
 
 function safeSerialize(value) {
     try {
@@ -95,12 +166,43 @@ function formatPanelHost(hostname) {
 }
 
 function syncBrandSummary(hostname = window.location.hostname, logCount = 0) {
+    if (brandAliasEl) {
+        brandAliasEl.textContent = panelSettingsState.alias || DEFAULT_PANEL_ALIAS;
+    }
     if (brandPanelHostEl) {
         brandPanelHostEl.textContent = formatPanelHost(hostname);
     }
     if (brandLogCountEl) {
         brandLogCountEl.textContent = String(Math.max(0, Number(logCount) || 0));
     }
+}
+
+function getDefaultSiteFolderDisplay() {
+    return String(panelSettingsState.default_site_folder || DEFAULT_SITE_FOLDER).trim() || DEFAULT_SITE_FOLDER;
+}
+
+function buildWebsitePathPreview(domain = "") {
+    const folder = getDefaultSiteFolderDisplay().replace(/\\/g, "/").replace(/\/+$/g, "");
+    const normalizedDomain = String(domain || "").trim().toLowerCase().replace(/[^a-z0-9.-]/g, "-");
+    if (!normalizedDomain) {
+        return folder;
+    }
+    return `${folder}/${normalizedDomain}`;
+}
+
+function syncWebsitePathHint() {
+    const preview = buildWebsitePathPreview("domain-name");
+    websitePathInputEl.value = buildWebsitePathPreview(websiteDomainInputEl.value);
+    websitePathInputEl.placeholder = preview;
+    if (websitePathHintEl) {
+        websitePathHintEl.innerHTML = `Each website is created as <code>${escapeHTML(preview)}</code>, and the PHP version list is loaded from installed runtimes in App Store.`;
+    }
+}
+
+function syncDocumentTitle() {
+    const alias = String(panelSettingsState.alias || DEFAULT_PANEL_ALIAS).trim() || DEFAULT_PANEL_ALIAS;
+    const viewTitle = viewConfig[activeView]?.title || "";
+    document.title = activeView === "overview" || !viewTitle ? alias : `${alias} - ${viewTitle}`;
 }
 
 function isMobileSidebar() {
@@ -170,7 +272,7 @@ const viewConfig = {
     },
     settings: {
         title: "Settings",
-        copy: "Edit App Store values and keep download links stored in the data folder instead of hardcoded in code.",
+        copy: "Set the frontend alias, timezone, default site folder, and open the popup for editing the app list.",
     },
     websites: {
         title: "Websites",
@@ -189,20 +291,10 @@ function showResult(payload) {
         ? payload.replace(/^Error:\s*/i, "")
         : payload?.message || payload?.status || "Request completed.";
 
-    const toast = document.createElement("div");
-    toast.className = `toast ${isError ? "error" : "success"}`;
-    toast.innerHTML = `
-        <div class="toast-title">${title}</div>
-        <div class="toast-message">${message}</div>
-    `;
-
+    const toast = createToastElement(title, message, isError ? "error" : "success");
     toastStackEl.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add("show"));
-
-    setTimeout(() => {
-        toast.classList.remove("show");
-        setTimeout(() => toast.remove(), 180);
-    }, 2600);
+    scheduleToastRemoval(toast, 2600);
 }
 
 function showPersistentToast(key, title, message, variant = "error") {
@@ -210,16 +302,12 @@ function showPersistentToast(key, title, message, variant = "error") {
     if (existingToast) {
         existingToast.querySelector(".toast-title").textContent = title;
         existingToast.querySelector(".toast-message").textContent = message;
+        existingToast.className = `toast ${variant} persistent show`;
         return existingToast;
     }
 
-    const toast = document.createElement("div");
-    toast.className = `toast ${variant} persistent show`;
-    toast.innerHTML = `
-        <div class="toast-title">${title}</div>
-        <div class="toast-message">${message}</div>
-    `;
-
+    const toast = createToastElement(title, message, variant, key);
+    toast.classList.add("persistent", "show");
     persistentToastByKey.set(key, toast);
     toastStackEl.appendChild(toast);
     return toast;
@@ -236,7 +324,50 @@ function removePersistentToast(key) {
         return;
     }
 
-    persistentToastByKey.delete(key);
+    dismissToast(toast);
+}
+
+function createToastElement(title, message, variant = "success", persistentKey = "") {
+    const toast = document.createElement("div");
+    toast.className = `toast ${variant}`;
+    if (persistentKey) {
+        toast.dataset.toastKey = persistentKey;
+    }
+    toast.innerHTML = `
+        <button type="button" class="toast-close" data-toast-close aria-label="Close notification">&times;</button>
+        <div class="toast-title">${escapeHTML(title)}</div>
+        <div class="toast-message">${escapeHTML(message)}</div>
+    `;
+    return toast;
+}
+
+function scheduleToastRemoval(toast, delayMs = 2600) {
+    if (!toast) {
+        return;
+    }
+    if (toast.dismissTimer) {
+        clearTimeout(toast.dismissTimer);
+    }
+    toast.dismissTimer = setTimeout(() => {
+        dismissToast(toast);
+    }, delayMs);
+}
+
+function dismissToast(toast) {
+    if (!toast) {
+        return;
+    }
+
+    if (toast.dismissTimer) {
+        clearTimeout(toast.dismissTimer);
+        toast.dismissTimer = null;
+    }
+
+    const key = String(toast.dataset.toastKey || "").trim();
+    if (key) {
+        persistentToastByKey.delete(key);
+    }
+
     toast.classList.remove("show");
     setTimeout(() => toast.remove(), 180);
 }
@@ -245,6 +376,16 @@ function showConnectionError(error) {
     const message = error?.message || "Failed to fetch";
     showPersistentToast("connection-status", "Action Failed", message, "error");
 }
+
+toastStackEl?.addEventListener("click", (event) => {
+    const closeButton = event.target.closest("[data-toast-close]");
+    if (!closeButton) {
+        return;
+    }
+
+    const toast = closeButton.closest(".toast");
+    dismissToast(toast);
+});
 
 function setPanelOfflineState(error) {
     const message = error?.message || "Failed to fetch";
@@ -517,7 +658,7 @@ async function ensureViewData(view, options = {}) {
         if (!force && collectionLoaded.settings) {
             return;
         }
-        await refreshAppStoreSettings();
+        await refreshPanelSettings({ force });
         return;
     }
 
@@ -1013,6 +1154,370 @@ function setWebsitePHPVersionLoadingState(message = "Loading PHP versions...") {
     websiteSubmitButtonEl.disabled = true;
 }
 
+function timezoneOptions(selectedValue = DEFAULT_PANEL_TIMEZONE) {
+    const current = String(selectedValue || DEFAULT_PANEL_TIMEZONE).trim() || DEFAULT_PANEL_TIMEZONE;
+    const options = buildTimezoneChoices(current);
+    return options.map((timezone) => `
+        <option value="${escapeHTML(timezone.value)}" ${timezone.value === current ? "selected" : ""}>${escapeHTML(timezone.label)}</option>
+    `).join("");
+}
+
+function buildTimezoneChoices(selectedValue = DEFAULT_PANEL_TIMEZONE) {
+    const current = String(selectedValue || DEFAULT_PANEL_TIMEZONE).trim() || DEFAULT_PANEL_TIMEZONE;
+    const seen = new Set();
+    const values = [];
+
+    const pushValue = (value) => {
+        const normalizedValue = String(value || "").trim();
+        if (!normalizedValue || seen.has(normalizedValue)) {
+            return;
+        }
+        seen.add(normalizedValue);
+        values.push(normalizedValue);
+    };
+
+    pushValue(current);
+    getSupportedTimezoneValues().forEach((timezone) => {
+        pushValue(timezone);
+    });
+
+    values.sort((left, right) => compareTimezoneValues(left, right));
+
+    return values.map((value) => ({
+        value,
+        label: formatTimezoneOptionLabel(value),
+    }));
+}
+
+function getSupportedTimezoneValues() {
+    if (typeof Intl?.supportedValuesOf === "function") {
+        try {
+            const zones = Intl.supportedValuesOf("timeZone")
+                .filter((value) => {
+                    const normalized = String(value || "").trim();
+                    return normalized
+                        && !normalized.startsWith("Etc/")
+                        && !normalized.startsWith("SystemV/")
+                        && normalized !== "Factory";
+                });
+            if (zones.length > 0) {
+                return ["UTC", ...zones.filter((value) => value !== "UTC")];
+            }
+        } catch {
+            // Fallback below.
+        }
+    }
+
+    return FALLBACK_TIMEZONES;
+}
+
+function compareTimezoneValues(left, right) {
+    if (left === "UTC") {
+        return -1;
+    }
+    if (right === "UTC") {
+        return 1;
+    }
+
+    const offsetCompare = timezoneOffsetMinutes(left) - timezoneOffsetMinutes(right);
+    if (offsetCompare !== 0) {
+        return offsetCompare;
+    }
+    return left.localeCompare(right);
+}
+
+function formatTimezoneOffset(timezone) {
+    const value = String(timezone || "").trim();
+    if (!value) {
+        return "";
+    }
+    if (value.toUpperCase() === "UTC") {
+        return "UTC+0";
+    }
+
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: value,
+            timeZoneName: "shortOffset",
+        }).formatToParts(new Date());
+        const offsetText = parts.find((part) => part.type === "timeZoneName")?.value || "";
+        const normalized = offsetText.replace(/^GMT/i, "UTC").replace(/\s+/g, "");
+        if (normalized && normalized !== "UTC") {
+            return normalized.replace(/^UTC([+-])0(\d)/, "UTC$1$2");
+        }
+    } catch {
+        // Fallback below.
+    }
+
+    return value.toUpperCase() === "UTC" ? "UTC+0" : value;
+}
+
+function formatTimezoneOptionLabel(timezone, fallbackLabel = "") {
+    const value = String(timezone || "").trim();
+    if (!value) {
+        return DEFAULT_PANEL_TIMEZONE;
+    }
+    if (value.toUpperCase() === "UTC") {
+        return "UTC+00:00 - UTC";
+    }
+
+    return `${normalizeTimezoneOffsetLabel(formatTimezoneOffset(value))} - ${value}`;
+}
+
+function normalizeTimezoneOffsetLabel(offsetText) {
+    const value = String(offsetText || "").trim();
+    const match = value.match(/^UTC([+-])(\d{1,2})(?::?(\d{2}))?$/i);
+    if (!match) {
+        return value;
+    }
+
+    const sign = match[1];
+    const hour = match[2].padStart(2, "0");
+    const minute = String(match[3] || "00").padStart(2, "0");
+    return `UTC${sign}${hour}:${minute}`;
+}
+
+function timezoneOffsetMinutes(timezone) {
+    const value = normalizeTimezoneOffsetLabel(formatTimezoneOffset(timezone));
+    const match = value.match(/^UTC([+-])(\d{2}):(\d{2})$/i);
+    if (!match) {
+        return 0;
+    }
+
+    const sign = match[1] === "-" ? -1 : 1;
+    const hours = Number(match[2] || 0);
+    const minutes = Number(match[3] || 0);
+    return sign * ((hours * 60) + minutes);
+}
+
+function languageOptions(selectedValue = DEFAULT_PANEL_LANGUAGE) {
+    const current = String(selectedValue || DEFAULT_PANEL_LANGUAGE).trim() || DEFAULT_PANEL_LANGUAGE;
+    return LANGUAGE_OPTIONS.map((language) => `
+        <option value="${escapeHTML(language.value)}" ${language.value === current ? "selected" : ""}>${escapeHTML(language.label)}</option>
+    `).join("");
+}
+
+function applyPanelSettingsState(payload = {}) {
+    panelSettingsState = {
+        alias: String(payload.alias || DEFAULT_PANEL_ALIAS).trim() || DEFAULT_PANEL_ALIAS,
+        timezone: String(payload.timezone || DEFAULT_PANEL_TIMEZONE).trim() || DEFAULT_PANEL_TIMEZONE,
+        language: String(payload.language || DEFAULT_PANEL_LANGUAGE).trim() || DEFAULT_PANEL_LANGUAGE,
+        default_site_folder: String(payload.default_site_folder || DEFAULT_SITE_FOLDER).trim() || DEFAULT_SITE_FOLDER,
+        resolved_site_root: String(payload.resolved_site_root || "").trim(),
+        server_time: String(payload.server_time || "").trim(),
+    };
+    syncBrandSummary(window.location.hostname, Number(brandLogCountEl?.textContent || 0));
+    syncWebsitePathHint();
+    syncDocumentTitle();
+}
+
+function renderPanelSettings(payload) {
+    applyPanelSettingsState(payload);
+    panelSettingsFormEl.innerHTML = `
+        <div class="panel-settings-grid">
+            <label class="panel-settings-field">
+                <span>Alias</span>
+                <input
+                    type="text"
+                    name="alias"
+                    value="${escapeHTML(panelSettingsState.alias)}"
+                    placeholder="${DEFAULT_PANEL_ALIAS}"
+                />
+                <small>Frontend title shown in the browser tab and sidebar.</small>
+            </label>
+            <label class="panel-settings-field">
+                <span>Server time</span>
+                <select name="timezone">
+                    ${timezoneOptions(panelSettingsState.timezone)}
+                </select>
+                <small>Current time: ${escapeHTML(panelSettingsState.server_time || "-")} (${escapeHTML(formatTimezoneOffset(panelSettingsState.timezone))})</small>
+            </label>
+            <label class="panel-settings-field">
+                <span>Language</span>
+                <select name="language">
+                    ${languageOptions(panelSettingsState.language)}
+                </select>
+                <small>Stored now for future multilingual support.</small>
+            </label>
+            <label class="panel-settings-field">
+                <span>Default site folder</span>
+                <div class="panel-settings-folder-input">
+                    <input
+                        type="text"
+                        name="default_site_folder"
+                        value="${escapeHTML(panelSettingsState.default_site_folder)}"
+                        placeholder="${DEFAULT_SITE_FOLDER}"
+                    />
+                    <button type="button" class="folder-picker-button" id="pick-default-site-folder" aria-label="Choose folder" title="Choose folder">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"></path>
+                        </svg>
+                    </button>
+                </div>
+                <small>Resolved root: ${escapeHTML(panelSettingsState.resolved_site_root || "-")}</small>
+            </label>
+        </div>
+        <div class="panel-settings-actions">
+            <button type="button" class="ghost" id="open-app-list-settings">Edit App List</button>
+            <button type="submit">Save Settings</button>
+        </div>
+    `;
+}
+
+function joinFolderBrowserPath(basePath = "", childSegment = "") {
+    const normalizedBase = String(basePath || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    const normalizedChild = String(childSegment || "").trim().replace(/^\/+/, "");
+    if (!normalizedBase) {
+        return normalizedChild;
+    }
+    if (!normalizedChild) {
+        return normalizedBase;
+    }
+    return `${normalizedBase}/${normalizedChild}`;
+}
+
+function buildFolderBrowserBreadcrumbs(displayPath = "", currentPath = "", rootPath = "") {
+    const normalized = String(displayPath || "").trim();
+    const normalizedRoot = String(rootPath || currentPath || ".").trim() || ".";
+    if (!normalized || normalized === "." || normalized === "/") {
+        return [{ label: "Root dir", path: normalizedRoot }];
+    }
+
+    const segments = normalized.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (/^[A-Za-z]:$/.test(segments[0] || "")) {
+        const drive = `${segments[0]}/`;
+        const crumbs = [{ label: drive, path: drive }];
+        let current = drive;
+        for (let index = 1; index < segments.length; index += 1) {
+            current += `${segments[index]}/`;
+            crumbs.push({ label: segments[index], path: current.replace(/\/$/, "") });
+        }
+        return crumbs;
+    }
+
+    const crumbs = [{ label: "Root dir", path: normalizedRoot }];
+    let current = normalizedRoot;
+    for (const segment of segments) {
+        current = joinFolderBrowserPath(current, segment);
+        crumbs.push({ label: segment, path: current });
+    }
+    return crumbs;
+}
+
+function renderFolderBrowserList() {
+    const keyword = String(folderBrowserSearchEl?.value || "").trim().toLowerCase();
+    const directories = Array.isArray(folderBrowserState.directories) ? folderBrowserState.directories : [];
+    const visibleDirectories = keyword
+        ? directories.filter((directory) => {
+            const name = String(directory?.name || "").toLowerCase();
+            const path = String(directory?.path || "").toLowerCase();
+            return name.includes(keyword) || path.includes(keyword);
+        })
+        : directories;
+
+    if (visibleDirectories.length === 0) {
+        folderBrowserListEl.innerHTML = `<div class="folder-browser-empty">${keyword ? "No matching folders found." : "No subfolders found here."}</div>`;
+        return;
+    }
+
+    folderBrowserListEl.innerHTML = visibleDirectories.map((directory) => `
+        <button
+            type="button"
+            class="folder-browser-item"
+            data-folder-browser-path="${escapeHTML(directory.path || "")}"
+            title="${escapeHTML(directory.path || "")}"
+        >
+            <span class="folder-browser-item-name">
+                <span class="folder-browser-item-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"></path></svg>
+                </span>
+                <span class="folder-browser-item-copy">
+                    <strong>${escapeHTML(directory.name || "")}</strong>
+                </span>
+            </span>
+            <span class="folder-browser-item-meta">${escapeHTML(directory.modified_at || "-")}</span>
+            <span class="folder-browser-item-meta">${escapeHTML(directory.permissions_owner || "-")}</span>
+        </button>
+    `).join("");
+}
+
+function renderFolderBrowser(payload) {
+    const roots = Array.isArray(payload?.roots) ? payload.roots : [];
+    folderBrowserState = {
+        current_path: String(payload?.current_path || "").trim(),
+        display_path: String(payload?.display_path || "").trim(),
+        parent_path: String(payload?.parent_path || "").trim(),
+        roots,
+        directories: Array.isArray(payload?.directories) ? payload.directories : [],
+    };
+
+    const rootPath = String(roots[0]?.path || folderBrowserState.current_path || ".").trim();
+    const breadcrumbs = buildFolderBrowserBreadcrumbs(
+        folderBrowserState.display_path || folderBrowserState.current_path,
+        folderBrowserState.current_path,
+        rootPath,
+    );
+    folderBrowserBreadcrumbsEl.innerHTML = breadcrumbs.map((crumb, index) => `
+        <button
+            type="button"
+            class="folder-browser-crumb"
+            data-folder-browser-path="${escapeHTML(crumb.path || "")}"
+        >
+            ${escapeHTML(crumb.label || "")}
+        </button>
+        ${index < breadcrumbs.length - 1 ? '<span class="folder-browser-crumb-sep" aria-hidden="true">›</span>' : ""}
+    `).join("");
+    folderBrowserBreadcrumbsEl.querySelectorAll(".folder-browser-crumb-sep").forEach((node) => {
+        node.textContent = "›";
+    });
+    folderBrowserBreadcrumbsEl.querySelectorAll(".folder-browser-crumb-sep").forEach((node) => {
+        node.textContent = String.fromCharCode(8250);
+    });
+    folderBrowserUpEl.disabled = !folderBrowserState.parent_path;
+    folderBrowserSelectionEl.value = folderBrowserState.display_path || folderBrowserState.current_path || ".";
+
+    folderBrowserRootsEl.innerHTML = roots.map((root) => `
+        <button
+            type="button"
+            class="folder-browser-root ${String(root.path || "") === folderBrowserState.current_path ? "active" : ""}"
+            data-folder-browser-path="${escapeHTML(root.path || "")}"
+        >
+            ${escapeHTML(root.name || root.path || "")}
+        </button>
+    `).join("");
+
+    renderFolderBrowserList();
+}
+
+async function refreshFolderBrowser(path = "") {
+    const query = path ? `?path=${encodeURIComponent(path)}` : "";
+    const payload = await api(`/api/settings/folder-browser${query}`);
+    renderFolderBrowser(payload);
+    return payload;
+}
+
+async function refreshPanelSettings(options = {}) {
+    const force = Boolean(options.force);
+    if (!force && collectionRefreshInFlight.settings) {
+        return collectionRefreshInFlight.settings;
+    }
+
+    const request = api("/api/settings/panel")
+        .then((payload) => {
+            renderPanelSettings(payload);
+            collectionLoaded.settings = true;
+            return payload;
+        })
+        .finally(() => {
+            if (collectionRefreshInFlight.settings === request) {
+                collectionRefreshInFlight.settings = null;
+            }
+        });
+
+    collectionRefreshInFlight.settings = request;
+    return request;
+}
+
 function renderAppStoreSettings(payload) {
     const groups = Array.isArray(payload?.groups) ? payload.groups : [];
     appStoreSettingsPathEl.textContent = payload?.file_path
@@ -1103,23 +1608,22 @@ function renderAppStoreSettings(payload) {
 async function refreshAppStoreSettings(options = {}) {
     const force = Boolean(options.force);
 
-    if (!force && collectionRefreshInFlight.settings) {
-        return collectionRefreshInFlight.settings;
+    if (!force && appStoreSettingsInFlight) {
+        return appStoreSettingsInFlight;
     }
 
     const request = api("/api/settings/app-store")
         .then((payload) => {
             renderAppStoreSettings(payload);
-            collectionLoaded.settings = true;
             return payload;
         })
         .finally(() => {
-            if (collectionRefreshInFlight.settings === request) {
-                collectionRefreshInFlight.settings = null;
+            if (appStoreSettingsInFlight === request) {
+                appStoreSettingsInFlight = null;
             }
         });
 
-    collectionRefreshInFlight.settings = request;
+    appStoreSettingsInFlight = request;
     return request;
 }
 
@@ -1750,6 +2254,81 @@ appStoreSettingsFormEl.addEventListener("submit", async (event) => {
     }
 });
 
+function openSettingsAppListModal() {
+    const modalEl = document.getElementById("settings-app-list-modal");
+    modalEl.hidden = false;
+    document.body.classList.add("modal-open");
+    refreshAppStoreSettings({ force: true }).catch((error) => {
+        showResult(`Error: ${error.message}`);
+    });
+}
+
+function closeSettingsAppListModal() {
+    document.getElementById("settings-app-list-modal").hidden = true;
+    document.body.classList.remove("modal-open");
+}
+
+async function openFolderBrowserModal() {
+    folderBrowserModalEl.hidden = false;
+    document.body.classList.add("modal-open");
+    folderBrowserSearchEl.value = "";
+    folderBrowserBreadcrumbsEl.innerHTML = `<span class="folder-browser-loading">Loading...</span>`;
+    folderBrowserSelectionEl.value = "";
+    folderBrowserRootsEl.innerHTML = "";
+    folderBrowserListEl.innerHTML = `<div class="folder-browser-empty">Loading folders...</div>`;
+    const input = panelSettingsFormEl.querySelector("[name='default_site_folder']");
+    await refreshFolderBrowser(String(input?.value || "").trim());
+}
+
+function closeFolderBrowserModal() {
+    folderBrowserModalEl.hidden = true;
+    document.body.classList.remove("modal-open");
+}
+
+panelSettingsFormEl.addEventListener("click", (event) => {
+    if (event.target.closest("#open-app-list-settings")) {
+        openSettingsAppListModal();
+        return;
+    }
+
+    if (event.target.closest("#pick-default-site-folder")) {
+        openFolderBrowserModal().catch((error) => {
+            folderBrowserListEl.innerHTML = `<div class="folder-browser-empty">${escapeHTML(error.message || "Failed to load folders.")}</div>`;
+            showResult(`Error: ${error.message}`);
+        });
+    }
+});
+
+panelSettingsFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(panelSettingsFormEl);
+    const submitButton = panelSettingsFormEl.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    submitButton.textContent = "Saving...";
+
+    try {
+        const payload = await api("/api/settings/panel", {
+            method: "POST",
+            body: JSON.stringify({
+                alias: String(form.get("alias") || "").trim(),
+                timezone: String(form.get("timezone") || "").trim(),
+                language: String(form.get("language") || "").trim(),
+                default_site_folder: String(form.get("default_site_folder") || "").trim(),
+            }),
+        });
+        renderPanelSettings(payload);
+        showResult(payload.message || "Panel settings saved.");
+    } catch (error) {
+        showResult(`Error: ${error.message}`);
+    } finally {
+        const nextSubmitButton = panelSettingsFormEl.querySelector("button[type='submit']");
+        if (nextSubmitButton) {
+            nextSubmitButton.disabled = false;
+            nextSubmitButton.textContent = "Save Settings";
+        }
+    }
+});
+
 async function openAppSettingModal(appId) {
     const modalEl = document.getElementById("app-setting-modal");
     const titleEl = document.getElementById("app-setting-modal-title");
@@ -1930,6 +2509,77 @@ document.getElementById("app-setting-modal").addEventListener("click", (event) =
     }
 });
 
+document.getElementById("settings-app-list-modal").addEventListener("click", (event) => {
+    if (event.target.matches("[data-modal-close='settings-app-list']")) {
+        closeSettingsAppListModal();
+    }
+});
+
+folderBrowserModalEl.addEventListener("click", (event) => {
+    if (event.target.matches("[data-modal-close='folder-browser']")) {
+        closeFolderBrowserModal();
+        return;
+    }
+
+    const targetPath = event.target.closest("[data-folder-browser-path]")?.dataset.folderBrowserPath;
+    if (targetPath !== undefined) {
+        refreshFolderBrowser(targetPath).catch((error) => {
+            showResult(`Error: ${error.message}`);
+        });
+    }
+});
+
+folderBrowserUpEl.addEventListener("click", () => {
+    if (!folderBrowserState.parent_path) {
+        return;
+    }
+    refreshFolderBrowser(folderBrowserState.parent_path).catch((error) => {
+        showResult(`Error: ${error.message}`);
+    });
+});
+
+folderBrowserRefreshEl.addEventListener("click", () => {
+    refreshFolderBrowser(folderBrowserState.current_path).catch((error) => {
+        showResult(`Error: ${error.message}`);
+    });
+});
+
+folderBrowserSearchEl.addEventListener("input", () => {
+    renderFolderBrowserList();
+});
+
+folderBrowserNewDirectoryEl.addEventListener("click", async () => {
+    const name = window.prompt("New directory name");
+    if (!name) {
+        return;
+    }
+
+    try {
+        const payload = await api("/api/settings/folder-browser/create", {
+            method: "POST",
+            body: JSON.stringify({
+                current_path: folderBrowserState.current_path,
+                name: String(name || "").trim(),
+            }),
+        });
+        renderFolderBrowser(payload);
+    } catch (error) {
+        showResult(`Error: ${error.message}`);
+    }
+});
+
+folderBrowserSelectEl.addEventListener("click", () => {
+    const input = panelSettingsFormEl.querySelector("[name='default_site_folder']");
+    if (input) {
+        input.value = folderBrowserState.display_path || folderBrowserState.current_path;
+    }
+    const helpText = input?.closest(".panel-settings-field")?.querySelector("small");
+    if (helpText) {
+        helpText.textContent = `Resolved root: ${folderBrowserState.current_path || "-"}`;
+    }
+    closeFolderBrowserModal();
+});
+
 document.addEventListener("click", (event) => {
     if (event.target.closest("[data-app-install-combo]")) {
         return;
@@ -1940,7 +2590,10 @@ document.addEventListener("click", (event) => {
 
 async function refreshAll(options = {}) {
     const { force = false } = options;
-    await refreshStatusOnly();
+    await Promise.all([
+        refreshStatusOnly(),
+        refreshPanelSettings({ force }),
+    ]);
 
     await ensureViewData(activeView, { force });
 
@@ -1980,6 +2633,7 @@ function setActiveView(view, options = {}) {
 
     sectionTitleEl.textContent = viewConfig[nextView].title;
     sectionCopyEl.textContent = viewConfig[nextView].copy;
+    syncDocumentTitle();
 
     if (updateHistory) {
         const nextURL = viewPath(nextView);
@@ -2011,6 +2665,8 @@ syncViewFromLocation({ replaceHistory: true, loadData: false });
 applyPerformanceMode();
 renderCachedWebsites();
 setSidebarOpen(false);
+syncWebsitePathHint();
+syncDocumentTitle();
 syncBrandSummary(window.location.hostname, 0);
 
 refreshAll().catch((error) => {
@@ -2052,12 +2708,21 @@ document.addEventListener("keydown", (event) => {
 
     if (event.key === "Escape" && !websiteModalEl.hidden) {
         closeWebsiteModal();
+        return;
+    }
+
+    if (event.key === "Escape" && !document.getElementById("settings-app-list-modal").hidden) {
+        closeSettingsAppListModal();
+        return;
+    }
+
+    if (event.key === "Escape" && !folderBrowserModalEl.hidden) {
+        closeFolderBrowserModal();
     }
 });
 
 websiteDomainInputEl.addEventListener("input", () => {
-    const normalized = websiteDomainInputEl.value.trim().toLowerCase().replace(/[^a-z0-9.-]/g, "-");
-    websitePathInputEl.value = normalized ? `www/${normalized}` : "";
+    websitePathInputEl.value = buildWebsitePathPreview(websiteDomainInputEl.value);
 });
 
 websitePathInputEl.addEventListener("input", () => {
@@ -2123,6 +2788,7 @@ scheduleStatusRefresh();
 async function openWebsiteModal() {
     websitePathTouched = false;
     websiteFormEl.reset();
+    syncWebsitePathHint();
     websitePathInputEl.value = "";
     websiteModalEl.hidden = false;
     document.body.classList.add("modal-open");
