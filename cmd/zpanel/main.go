@@ -2697,7 +2697,7 @@ func runMetricsSampler(ctx context.Context, cache *metricsCache) {
 		if bootAt.IsZero() || osLabel == "Unknown OS" {
 			hostInfo, _ := host.InfoWithContext(ctx)
 			if hostInfo != nil {
-				osLabel = formatOSLabel(hostInfo.Platform, hostInfo.PlatformVersion, hostInfo.OS)
+				osLabel = formatOSLabel(hostInfo.Platform, hostInfo.PlatformVersion, hostInfo.OS, hostInfo.KernelArch)
 				switch {
 				case hostInfo.BootTime > 0:
 					bootAt = time.Unix(int64(hostInfo.BootTime), 0)
@@ -2797,62 +2797,48 @@ func runMetricsSampler(ctx context.Context, cache *metricsCache) {
 	}
 }
 
-func formatOSLabel(platform string, version string, osName string) string {
+func formatOSLabel(platform string, version string, osName string, arch string) string {
 	platform = strings.TrimSpace(platform)
 	version = strings.TrimSpace(version)
 	osName = strings.TrimSpace(osName)
+	arch = normalizeArchLabel(arch)
 
 	if strings.HasPrefix(strings.ToLower(platform), "microsoft ") {
 		platform = strings.TrimSpace(platform[len("Microsoft "):])
 	}
 
-	if strings.Contains(strings.ToLower(platform), "windows") {
-		return formatWindowsOSLabel(platform, version, osName)
-	}
-
+	label := ""
 	if platform != "" && version != "" {
-		return strings.TrimSpace(platform + " " + version)
+		label = strings.TrimSpace(platform + " " + version)
+	} else if platform != "" {
+		label = platform
+	} else if osName != "" {
+		label = osName
 	}
-	if platform != "" {
-		return platform
+
+	if label == "" {
+		return "Unknown OS"
 	}
-	if osName != "" {
-		return osName
+
+	if arch != "" && !strings.Contains(strings.ToLower(label), strings.ToLower(arch)) {
+		label = strings.TrimSpace(label + " " + arch)
 	}
-	return "Unknown OS"
+
+	return label
 }
 
-func formatWindowsOSLabel(platform string, version string, osName string) string {
-	shortVersion := shortWindowsVersion(version)
-	if platform == "" {
-		platform = "Windows"
-	}
-	if shortVersion != "" {
-		return strings.TrimSpace(platform + " " + shortVersion)
-	}
-	if osName != "" {
-		return strings.TrimSpace(platform + " " + osName)
-	}
-	return platform
-}
-
-func shortWindowsVersion(version string) string {
-	version = strings.TrimSpace(version)
-	if version == "" {
+func normalizeArchLabel(arch string) string {
+	arch = strings.TrimSpace(strings.ToLower(arch))
+	switch arch {
+	case "":
 		return ""
+	case "amd64", "x86_64", "x64":
+		return "x86_64"
+	case "386", "i386", "x86":
+		return "x86"
+	default:
+		return arch
 	}
-
-	fields := strings.Fields(version)
-	if len(fields) == 0 {
-		return ""
-	}
-
-	numeric := fields[0]
-	parts := strings.Split(numeric, ".")
-	if len(parts) >= 3 {
-		return strings.Join(parts[:3], ".")
-	}
-	return numeric
 }
 
 func round2(value float64) float64 {

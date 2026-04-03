@@ -519,11 +519,7 @@ function formatGigabytes(value) {
 function formatUptime(totalSeconds) {
     const seconds = Math.max(0, Number(totalSeconds) || 0);
     const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-
-    return `${days}:${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+    return `${days} Day(s)`;
 }
 
 function formatMemorySummary(usedMb, totalMb) {
@@ -611,7 +607,7 @@ async function loadStatus() {
 
     lastStatusSignature = statusSignature;
     syncBrandSummary(window.location.hostname, logFiles);
-    document.getElementById("resource-system-label").textContent = data.os_label || "System Resource";
+    document.getElementById("resource-system-label").textContent = data.os_label || "Unknown OS";
     document.getElementById("resource-uptime").textContent = formatUptime(data.uptime_seconds);
     document.getElementById("website-count").textContent = websites;
     document.getElementById("ftp-count").textContent = ftpCount;
