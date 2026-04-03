@@ -692,7 +692,7 @@ function websiteCard(website) {
 
     wrapper.innerHTML = `
         <div class="website-check">
-            <input type="checkbox" aria-label="Select ${website.domain}" />
+            <input type="checkbox" aria-label="Select ${website.domain}" value="${website.domain}" />
         </div>
         <div class="website-site">
             ${websiteName}
@@ -2813,3 +2813,88 @@ function closeWebsiteModal() {
     websiteModalEl.hidden = true;
     document.body.classList.remove("modal-open");
 }
+
+// ── Select-all checkbox logic ────────────────────────────────────────────────
+function getRowCheckboxes() {
+    return Array.from(websiteListEl.querySelectorAll('.website-check input[type="checkbox"]'));
+}
+
+function syncSelectAllCheckbox() {
+    const selectAllEl = document.getElementById("website-select-all");
+    const deleteBtn = document.getElementById("website-delete-selected");
+    if (!selectAllEl) return;
+    const boxes = getRowCheckboxes();
+    if (boxes.length === 0) {
+        selectAllEl.checked = false;
+        selectAllEl.indeterminate = false;
+        if (deleteBtn) deleteBtn.disabled = true;
+        return;
+    }
+    const checkedCount = boxes.filter(cb => cb.checked).length;
+    if (deleteBtn) deleteBtn.disabled = (checkedCount === 0);
+
+    if (checkedCount === 0) {
+        selectAllEl.checked = false;
+        selectAllEl.indeterminate = false;
+    } else if (checkedCount === boxes.length) {
+        selectAllEl.checked = true;
+        selectAllEl.indeterminate = false;
+    } else {
+        selectAllEl.checked = false;
+        selectAllEl.indeterminate = true;
+    }
+}
+
+document.getElementById("website-select-all")?.addEventListener("change", function () {
+    const checked = this.checked;
+    getRowCheckboxes().forEach(cb => { cb.checked = checked; });
+    syncSelectAllCheckbox();
+});
+
+websiteListEl.addEventListener("change", function (event) {
+    if (event.target.type === "checkbox") {
+        syncSelectAllCheckbox();
+    }
+});
+
+document.getElementById("website-delete-selected")?.addEventListener("click", async function () {
+    const boxes = getRowCheckboxes().filter(cb => cb.checked);
+    if (boxes.length === 0) return;
+    
+    if (!window.confirm(`Delete ${boxes.length} selected website(s)?`)) {
+        return;
+    }
+    
+    this.disabled = true;
+    const originalText = this.textContent;
+    this.textContent = "Deleting...";
+
+    try {
+        let successCount = 0;
+        for (const box of boxes) {
+            const domain = box.value;
+            if (!domain) continue;
+            await api("/api/website/delete", {
+                method: "POST",
+                body: JSON.stringify({ domain }),
+            });
+            successCount++;
+        }
+        showResult(`Successfully deleted ${successCount} website(s).`);
+    } catch (error) {
+        showResult(`Error deleting sites: ${error.message}`);
+    } finally {
+        this.textContent = originalText;
+        await Promise.allSettled([
+            refreshWebsites({ force: true }),
+            refreshStatusOnly(),
+        ]);
+        syncSelectAllCheckbox();
+    }
+});
+
+const _origRenderWebsiteList = renderWebsiteList;
+renderWebsiteList = function(websites) {
+    _origRenderWebsiteList(websites);
+    syncSelectAllCheckbox();
+};

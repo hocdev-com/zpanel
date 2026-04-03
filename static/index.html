@@ -6,7 +6,7 @@
     <title>zPanel</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="shortcut icon" href="/favicon.svg" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260403-03" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260403-05" />
 </head>
 <body>
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
@@ -247,6 +247,7 @@
                         <div class="website-toolbar-left">
                             <button id="website-open-modal" type="button">Add Site</button>
                             <button class="ghost" id="website-refresh" type="button">Refresh</button>
+                            <button class="ghost warn" id="website-delete-selected" type="button" disabled>Delete</button>
                         </div>
                         <div class="website-toolbar-copy">
                             <span class="eyebrow">Website Manager</span>
@@ -255,7 +256,9 @@
                     </div>
                     <div class="website-table">
                         <div class="website-table-head">
-                            <span class="website-head-spacer" aria-hidden="true"></span>
+                            <div class="website-check">
+                                <input type="checkbox" id="website-select-all" aria-label="Select all websites" title="Select all" />
+                            </div>
                             <span>Site name</span>
                             <span>Status</span>
                             <span>PHP</span>
