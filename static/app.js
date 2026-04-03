@@ -698,17 +698,21 @@ function websiteCard(website) {
             ${websiteName}
             <small>${displayPath.replace(/^.*\/www\//i, "")}</small>
         </div>
-        <button class="website-status ${isRunning ? "running" : "stopped"}" data-action="${isRunning ? "website-stop" : "website-start"}" data-domain="${website.domain}" title="${isRunning ? "Stop site" : "Start site"}" aria-label="${isRunning ? "Stop site" : "Start site"}" type="button"></button>
-        <div class="website-php-version">PHP ${phpVersion}</div>
-        <div class="website-expiration">Perpetual</div>
-        <div class="website-ssl ${isRunning ? "ok" : "expired"}">${isRunning ? "Ready" : "Expired"}</div>
-        <div class="website-requests">
+        <div class="website-status-cell">
+            <button class="website-status ${isRunning ? "running" : "stopped"}" data-action="${isRunning ? "website-stop" : "website-start"}" data-domain="${website.domain}" title="${isRunning ? "Stop site" : "Start site"}" aria-label="${isRunning ? "Stop site" : "Start site"}" type="button"></button>
+            <span class="website-status-text">${isRunning ? "Running" : "Stopped"}</span>
+        </div>
+        <div class="website-php-version" data-label="PHP">PHP ${phpVersion}</div>
+        <div class="website-expiration" data-label="Expiration">Perpetual</div>
+        <div class="website-ssl ${isRunning ? "ok" : "expired"}" data-label="SSL">${isRunning ? "Ready" : "Expired"}</div>
+        <div class="website-requests" data-label="Requests">
             <span class="website-requests-chart" aria-label="Requests activity">
                 <i></i><i></i><i></i><i></i><i></i><i></i>
             </span>
+            <span class="website-requests-value">${requestCount} req</span>
         </div>
-        <div class="website-waf">--</div>
-        <div class="website-actions website-operate">
+        <div class="website-waf" data-label="WAF">--</div>
+        <div class="website-actions website-operate" data-label="Actions">
             <button class="ghost" data-action="website-delete" data-domain="${website.domain}">Delete</button>
         </div>
     `;

@@ -1191,6 +1191,11 @@ button.ghost {
     box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
 }
 
+#website-section {
+    container-type: inline-size;
+    container-name: website-section;
+}
+
 .website-toolbar {
     display: flex;
     align-items: center;
@@ -1220,6 +1225,29 @@ button.ghost {
 .website-toolbar-copy p {
     color: #5a7187;
     line-height: 1.5;
+}
+
+@container website-section (max-width: 920px) {
+    .website-toolbar,
+    .website-toolbar-copy {
+        justify-items: start;
+        text-align: left;
+    }
+
+    .website-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .website-toolbar-left {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: min(280px, 100%);
+    }
+
+    .website-toolbar-left button {
+        width: 100%;
+    }
 }
 
 .website-table {
@@ -1332,6 +1360,14 @@ button.ghost {
     font-size: 0.9rem;
 }
 
+.website-status-cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    min-width: 0;
+}
+
 .website-status {
     display: inline-flex;
     align-items: center;
@@ -1387,6 +1423,58 @@ button.ghost {
     padding-left: 1.5px;
 }
 
+.website-status {
+    width: 24px;
+    height: 24px;
+    color: #f59e0b;
+    flex: 0 0 auto;
+}
+
+.website-status::before {
+    position: absolute;
+    inset: 0;
+    width: auto;
+    height: auto;
+    border-color: currentColor;
+    background: #fff;
+}
+
+.website-status::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 9px;
+    transform: translate(-50%, -50%);
+    background:
+        linear-gradient(currentColor 0 0) calc(50% - 2.5px) 50% / 2px 9px no-repeat,
+        linear-gradient(currentColor 0 0) calc(50% + 2.5px) 50% / 2px 9px no-repeat;
+}
+
+.website-status.running::before {
+    content: "";
+    border-color: currentColor;
+    background: #fff;
+    padding-left: 0;
+}
+
+.website-status.running::after {
+    width: 9px;
+    height: 11px;
+    background: currentColor;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+    transform: translate(-38%, -50%);
+}
+
+.website-status-text {
+    display: none;
+    color: #334155;
+    font-size: 0.88rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
 .website-requests,
 .website-operate {
     display: flex;
@@ -1397,6 +1485,14 @@ button.ghost {
 .website-expiration,
 .website-waf {
     color: #334155;
+}
+
+.website-php-version,
+.website-expiration,
+.website-ssl,
+.website-requests,
+.website-waf {
+    min-width: 0;
 }
 
 .website-php-version {
@@ -1423,6 +1519,7 @@ button.ghost {
 .website-requests {
     align-items: center;
     justify-self: start;
+    gap: 8px;
 }
 
 .website-requests-chart {
@@ -1461,6 +1558,12 @@ button.ghost {
 
 .website-requests-chart i:nth-child(6) {
     height: 3px;
+}
+
+.website-requests-value {
+    display: none;
+    color: #5f6f82;
+    font-size: 0.88rem;
 }
 
 .website-operate {
@@ -1505,49 +1608,7 @@ button.ghost {
     color: #5a7187;
 }
 
-@container website-table (max-width: 1120px) {
-    .website-table-head,
-    .website-row {
-        grid-template-columns: 34px minmax(220px, 1.4fr) 52px minmax(140px, 1fr) minmax(110px, 0.8fr);
-    }
-
-    .website-table-head span:nth-child(6),
-    .website-table-head span:nth-child(7),
-    .website-table-head span:nth-child(8),
-    .website-table-head span:nth-child(9) {
-        display: none;
-    }
-
-    .website-row > :nth-child(6),
-    .website-row > :nth-child(7),
-    .website-row > :nth-child(8),
-    .website-row > :nth-child(9) {
-        grid-column: 1 / -1;
-    }
-}
-
-@container website-table (max-width: 720px) {
-    .website-table {
-        border-radius: 16px;
-    }
-
-    .website-table-head {
-        display: none;
-    }
-
-    .website-row {
-        grid-template-columns: 1fr;
-        gap: 14px;
-    }
-
-    .website-check {
-        justify-content: flex-start;
-    }
-
-    .website-operate {
-        justify-content: flex-start;
-    }
-}
+/* old website-table container breakpoints removed — replaced by website-section responsive in the section below */
 
 .modal-shell {
     position: fixed;
@@ -3342,36 +3403,17 @@ button.ghost {
         border-right: 0;
     }
 
-    .website-table-head,
-    .website-row {
-        grid-template-columns: 34px minmax(220px, 1.4fr) 52px minmax(140px, 1fr) minmax(110px, 0.8fr);
-    }
-
-    .website-table-head span:nth-child(6),
-    .website-table-head span:nth-child(7),
-    .website-table-head span:nth-child(8),
-    .website-table-head span:nth-child(9) {
-        display: none;
-    }
-
-    .website-row> :nth-child(6),
-    .website-row> :nth-child(7),
-    .website-row> :nth-child(8),
-    .website-row> :nth-child(9) {
-        grid-column: 1 / -1;
-    }
+    /* website-table responsive moved to container queries below */
 }
+
+/* @media (max-width: 860px) website-table rules removed — handled by container queries */
 
 @media (max-width: 760px) {
 
-    .content,
-    .sidebar {
-        padding: 18px;
+    .content {
+        padding: 0 18px 18px;
     }
 
-    .content {
-        padding-top: 0;
-    }
 
     .resource-bar {
         width: calc(100% + 36px);
@@ -3553,65 +3595,13 @@ button.ghost {
         height: 120px;
     }
 
-    .website-toolbar,
-    .website-toolbar-copy {
-        justify-items: start;
-        text-align: left;
-    }
+    /* website-table card rules removed — handled by container queries */
 
-    .website-toolbar {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .website-toolbar-left button {
-        width: 100%;
-    }
-
-    .website-tabs,
-    .website-modal-tabs {
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .website-tabs::-webkit-scrollbar,
-    .website-modal-tabs::-webkit-scrollbar {
-        display: none;
-    }
-
-    .website-tab,
-    .website-modal-tab {
-        white-space: nowrap;
-    }
-
-    .website-table {
-        border-radius: 16px;
-    }
-
-    .website-table-head {
-        display: none;
-    }
-
-    .website-row {
-        grid-template-columns: 1fr;
-        gap: 14px;
-    }
-
-    .website-check {
-        justify-content: flex-start;
-    }
-
-    .website-operate {
-        justify-content: flex-start;
-    }
-
-    .website-actions,
     .modal-actions {
         display: grid;
         grid-template-columns: 1fr;
     }
 
-    .website-actions button,
     .modal-actions button {
         width: 100%;
     }
@@ -3808,4 +3798,122 @@ button.ghost {
     }
 }
 
-/* UI Overrides: Header Icon & Typography */
+/* old card-based website responsive removed — see CONSOLIDATED section below */
+
+#website-section {
+    container-type: inline-size;
+    container-name: website-section;
+}
+
+/* ── Step 1: toolbar adapts layout ── */
+@container website-section (max-width: 1280px) {
+    .website-toolbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .website-toolbar-left {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .website-toolbar-left button {
+        width: auto;
+        min-width: 108px;
+    }
+
+    .website-toolbar-copy {
+        justify-items: start;
+        text-align: left;
+    }
+
+    .website-tabs,
+    .website-modal-tabs {
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .website-tabs::-webkit-scrollbar,
+    .website-modal-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .website-tab,
+    .website-modal-tab {
+        white-space: nowrap;
+    }
+}
+
+/* ── Step 2: hide Requests, WAF, SSL columns ── */
+@container website-section (max-width: 1100px) {
+    .website-table-head,
+    .website-row {
+        /* checkbox | name | status | PHP | Expiration | Operate */
+        grid-template-columns: 34px minmax(180px, 2fr) 52px minmax(100px, 0.85fr) minmax(100px, 0.85fr) minmax(72px, 0.55fr) !important;
+    }
+
+    /* Hide SSL (col 6), Requests (col 7), WAF (col 8) header cells */
+    .website-table-head span:nth-child(6),
+    .website-table-head span:nth-child(7),
+    .website-table-head span:nth-child(8) {
+        display: none !important;
+    }
+
+    /* Hide matching row cells */
+    .website-row > .website-ssl,
+    .website-row > .website-requests,
+    .website-row > .website-waf {
+        display: none !important;
+    }
+}
+
+/* ── Step 3: also hide PHP and Expiration columns ── */
+@container website-section (max-width: 760px) {
+    .website-table-head,
+    .website-row {
+        /* checkbox | name | status | Operate */
+        grid-template-columns: 34px minmax(140px, 1fr) 52px minmax(72px, 0.55fr) !important;
+    }
+
+    /* Hide PHP (col 4), Expiration (col 5) header cells */
+    .website-table-head span:nth-child(4),
+    .website-table-head span:nth-child(5),
+    .website-table-head span:nth-child(6),
+    .website-table-head span:nth-child(7),
+    .website-table-head span:nth-child(8) {
+        display: none !important;
+    }
+
+    /* Hide matching row cells */
+    .website-row > .website-php-version,
+    .website-row > .website-expiration,
+    .website-row > .website-ssl,
+    .website-row > .website-requests,
+    .website-row > .website-waf {
+        display: none !important;
+    }
+}
+
+/* ── Step 4: very small — keep flat table, enable horizontal scroll on the table ── */
+@container website-section (max-width: 540px) {
+    /* Toolbar buttons stay side-by-side */
+    .website-toolbar-left {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+        width: 100% !important;
+    }
+
+    .website-toolbar-left button {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+    }
+
+    /* Table allows horizontal scroll if still too tight */
+    .website-table {
+        overflow-x: auto !important;
+    }
+}
+
