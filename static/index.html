@@ -428,6 +428,22 @@
         </section>
     </div>
 
-    <script src="/static/app.js?v=20260402-18"></script>
+    <div class="modal-shell" id="confirm-modal" hidden>
+        <div class="modal-backdrop" id="confirm-modal-backdrop"></div>
+        <section class="modal-card confirm-modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+            <button class="modal-close" type="button" id="confirm-modal-close" aria-label="Close">×</button>
+            <div class="modal-head">
+                <span class="eyebrow warn">Action Required</span>
+                <h3 id="confirm-modal-title">Confirm</h3>
+                <p id="confirm-modal-message">Are you sure?</p>
+            </div>
+            <div class="modal-actions">
+                <button class="ghost" id="confirm-modal-cancel" type="button">Cancel</button>
+                <button class="warn" id="confirm-modal-ok" type="button">Confirm</button>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/app.js?v=20260403-19"></script>
 </body>
 </html>

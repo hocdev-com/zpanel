@@ -387,6 +387,48 @@ toastStackEl?.addEventListener("click", (event) => {
     dismissToast(toast);
 });
 
+// --- Custom Confirm Dialog API ---
+function showConfirmDialog(title, message, options = {}) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById("confirm-modal");
+        if (!modal) {
+            resolve(window.confirm(`${title}\n${message}`));
+            return;
+        }
+
+        document.getElementById("confirm-modal-title").textContent = title || "Confirm";
+        document.getElementById("confirm-modal-message").textContent = message || "Are you sure?";
+        
+        const okBtn = document.getElementById("confirm-modal-ok");
+        if (options.okText) okBtn.textContent = options.okText;
+        else okBtn.textContent = "Confirm";
+
+        const closeBtn = document.getElementById("confirm-modal-close");
+        const cancelBtn = document.getElementById("confirm-modal-cancel");
+        const backdrop = document.getElementById("confirm-modal-backdrop");
+        
+        const cleanup = () => {
+            modal.hidden = true;
+            document.body.classList.remove("modal-open");
+            okBtn.removeEventListener("click", onOk);
+            closeBtn.removeEventListener("click", onCancel);
+            cancelBtn.removeEventListener("click", onCancel);
+            backdrop.removeEventListener("click", onCancel);
+        };
+        
+        const onOk = () => { cleanup(); resolve(true); };
+        const onCancel = () => { cleanup(); resolve(false); };
+        
+        okBtn.addEventListener("click", onOk);
+        closeBtn.addEventListener("click", onCancel);
+        cancelBtn.addEventListener("click", onCancel);
+        backdrop.addEventListener("click", onCancel);
+        
+        modal.hidden = false;
+        document.body.classList.add("modal-open");
+    });
+}
+
 function setPanelOfflineState(error) {
     const message = error?.message || "Failed to fetch";
     connectionState = "offline";
@@ -1764,7 +1806,7 @@ async function refreshDatabases() {
 }
 
 async function handleWebsiteAction(action, domain) {
-    if (action === "website-delete" && !window.confirm(`Delete website "${domain}"?`)) {
+    if (action === "website-delete" && !(await showConfirmDialog("Delete Website", `Are you sure you want to delete website "${domain}"?`, { okText: "Delete" }))) {
         return;
     }
 
@@ -2861,9 +2903,12 @@ document.getElementById("website-delete-selected")?.addEventListener("click", as
     const boxes = getRowCheckboxes().filter(cb => cb.checked);
     if (boxes.length === 0) return;
     
-    if (!window.confirm(`Delete ${boxes.length} selected website(s)?`)) {
-        return;
-    }
+    const confirmed = await showConfirmDialog(
+        "Delete Websites",
+        `Are you sure you want to delete ${boxes.length} selected website(s)?`,
+        { okText: "Delete" }
+    );
+    if (!confirmed) return;
     
     this.disabled = true;
     const originalText = this.textContent;
