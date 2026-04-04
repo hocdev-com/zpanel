@@ -1095,7 +1095,23 @@ func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 		apps[i].VersionIcons = make(map[string]string)
 		apps[i].ShowOnDashboardVersions = make(map[string]bool)
 
-		apps[i].ShowOnDashboard = valueAtBool(appStoreSettings.ShowOnDashboard, appID, apps[i].Version)
+		mergedVersions := collectMergedAppStoreSettingsVersions(appID, nil, appStoreSettings)
+		for _, ver := range mergedVersions {
+			if strings.TrimSpace(ver) == "" {
+				continue
+			}
+			if !containsString(apps[i].AvailableVersions, ver) {
+				apps[i].AvailableVersions = append(apps[i].AvailableVersions, ver)
+			}
+			if apps[i].DownloadURLs == nil {
+				apps[i].DownloadURLs = map[string]string{}
+			}
+			if downloadURL := strings.TrimSpace(mergedValueAt(appStoreSettings.Downloads, appID, ver, appStoreSettings)); downloadURL != "" {
+				apps[i].DownloadURLs[ver] = downloadURL
+			}
+		}
+
+		apps[i].ShowOnDashboard = mergedValueAtBool(appStoreSettings.ShowOnDashboard, appID, apps[i].Version, appStoreSettings)
 		if legacyValue, ok := dashboardSettings[appID]; ok {
 			apps[i].ShowOnDashboard = legacyValue || apps[i].ShowOnDashboard
 		}
@@ -1119,31 +1135,29 @@ func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 		if version := strings.TrimSpace(apps[i].Version); version != "" {
 			versionSet[version] = struct{}{}
 		}
-		if appStoreSettings.ShowOnDashboard != nil && appStoreSettings.ShowOnDashboard[appID] != nil {
-			for ver := range appStoreSettings.ShowOnDashboard[appID] {
-				if strings.TrimSpace(ver) != "" {
-					versionSet[ver] = struct{}{}
-				}
+		for _, ver := range mergedVersions {
+			if strings.TrimSpace(ver) != "" {
+				versionSet[ver] = struct{}{}
 			}
 		}
 
 		for ver := range versionSet {
-			if title := strings.TrimSpace(valueAt(appStoreSettings.Titles, appID, ver)); title != "" {
+			if title := strings.TrimSpace(mergedValueAt(appStoreSettings.Titles, appID, ver, appStoreSettings)); title != "" {
 				apps[i].VersionTitles[ver] = title
 			} else {
 				apps[i].VersionTitles[ver] = defaultAppStoreReleaseTitle(appID, ver)
 			}
 
-			if instructions := strings.TrimSpace(valueAt(appStoreSettings.Instructions, appID, ver)); instructions != "" {
+			if instructions := strings.TrimSpace(mergedValueAt(appStoreSettings.Instructions, appID, ver, appStoreSettings)); instructions != "" {
 				apps[i].VersionInstructions[ver] = instructions
 			} else {
 				apps[i].VersionInstructions[ver] = defaultAppStoreReleaseInstructions(appID, ver)
 			}
-			if iconData := strings.TrimSpace(valueAt(appStoreSettings.Icons, appID, ver)); iconData != "" {
+			if iconData := strings.TrimSpace(mergedValueAt(appStoreSettings.Icons, appID, ver, appStoreSettings)); iconData != "" {
 				apps[i].VersionIcons[ver] = iconData
 			}
 
-			isShown := valueAtBool(appStoreSettings.ShowOnDashboard, appID, ver)
+			isShown := mergedValueAtBool(appStoreSettings.ShowOnDashboard, appID, ver, appStoreSettings)
 			if legacyValue, ok := dashboardSettings[appID+":"+ver]; ok {
 				isShown = legacyValue || isShown
 			}
@@ -1190,6 +1204,11 @@ func appendSyntheticAppStoreApps(apps []runtimeApp, settings appStoreSettingsFil
 	}
 
 	for _, appID := range appStoreConfiguredAppIDs(settings) {
+		if targetID := appStoreAliasTarget(appID, settings); targetID != "" && targetID != appID {
+			if _, ok := existing[targetID]; ok {
+				continue
+			}
+		}
 		if _, ok := existing[appID]; ok {
 			continue
 		}

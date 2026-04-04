@@ -102,20 +102,22 @@ func TestUninstallMySQLRemovesRuntimeFiles(t *testing.T) {
 
 func TestBuildInstallPlan(t *testing.T) {
 	cases := []struct {
-		appID      string
-		wantApache bool
-		wantPHP    bool
-		wantMySQL  bool
+		appID          string
+		wantApache     bool
+		wantPHP        bool
+		wantMySQL      bool
+		wantPHPMyAdmin bool
 	}{
 		{appID: "apache", wantApache: true},
 		{appID: "php", wantPHP: true},
 		{appID: "mysql", wantMySQL: true},
+		{appID: "phpmyadmin", wantPHPMyAdmin: true},
 		{appID: "stack", wantApache: true, wantPHP: true, wantMySQL: true},
 	}
 
 	for _, tc := range cases {
 		plan := buildInstallPlan(tc.appID)
-		if plan.needApache != tc.wantApache || plan.needPHP != tc.wantPHP || plan.needMySQL != tc.wantMySQL {
+		if plan.needApache != tc.wantApache || plan.needPHP != tc.wantPHP || plan.needMySQL != tc.wantMySQL || plan.needPHPMyAdmin != tc.wantPHPMyAdmin {
 			t.Fatalf("unexpected plan for %s: %+v", tc.appID, plan)
 		}
 	}
@@ -588,5 +590,154 @@ func TestApacheInstalledWithoutPHPStillShowsStart(t *testing.T) {
 	}
 	if apacheApp.StatusLabel != "Installed" {
 		t.Fatalf("unexpected apache status label: %s", apacheApp.StatusLabel)
+	}
+}
+
+func TestListAppsShowsPHPMyAdminDependencies(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	phpMyAdminRoot := filepath.Join(manager.paths().phpMyAdminDir, "phpMyAdmin-5.2.3-all-languages")
+	if err := os.MkdirAll(phpMyAdminRoot, 0o755); err != nil {
+		t.Fatalf("mkdir phpmyadmin root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(phpMyAdminRoot, "index.php"), []byte("<?php"), 0o644); err != nil {
+		t.Fatalf("write phpmyadmin index: %v", err)
+	}
+
+	apps := manager.listApps()
+
+	var phpMyAdminApp runtimeApp
+	found := false
+	for _, app := range apps {
+		if app.ID == "phpmyadmin" {
+			phpMyAdminApp = app
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("phpmyadmin app not found")
+	}
+	if !phpMyAdminApp.Installed {
+		t.Fatal("expected phpmyadmin to be installed")
+	}
+	if phpMyAdminApp.CanStart {
+		t.Fatal("expected phpmyadmin start to be blocked when dependencies are missing")
+	}
+	if len(phpMyAdminApp.MissingDependencies) == 0 {
+		t.Fatal("expected phpmyadmin to report missing dependencies")
+	}
+	if !strings.Contains(phpMyAdminApp.DependencyMessage, "Requires Apache and MySQL running") {
+		t.Fatalf("unexpected dependency message: %s", phpMyAdminApp.DependencyMessage)
+	}
+}
+
+func TestConfigureApacheAddsPHPMyAdminAlias(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	confPath := manager.httpdConfPath()
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
+		t.Fatalf("mkdir conf dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(manager.apacheRoot(), "htdocs"), 0o755); err != nil {
+		t.Fatalf("mkdir htdocs: %v", err)
+	}
+	if err := os.MkdirAll(manager.phpRoot("8.3.30"), 0o755); err != nil {
+		t.Fatalf("mkdir php root: %v", err)
+	}
+	if err := os.WriteFile(manager.phpExe("8.3.30"), []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write php exe: %v", err)
+	}
+	if err := os.WriteFile(manager.phpCgiExe("8.3.30"), []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write php-cgi exe: %v", err)
+	}
+
+	phpMyAdminRoot := filepath.Join(manager.paths().phpMyAdminDir, "phpMyAdmin-5.2.3-all-languages")
+	if err := os.MkdirAll(phpMyAdminRoot, 0o755); err != nil {
+		t.Fatalf("mkdir phpmyadmin root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(phpMyAdminRoot, "index.php"), []byte("<?php"), 0o644); err != nil {
+		t.Fatalf("write phpmyadmin index: %v", err)
+	}
+	if err := manager.ensurePHPMyAdminConfig(); err != nil {
+		t.Fatalf("ensure phpmyadmin config: %v", err)
+	}
+
+	conf := "ServerRoot \"C:/Apache24\"\nListen 80\nServerName localhost:80\nDirectoryIndex index.html\n" +
+		"# LoadModule proxy_module modules/mod_proxy.so\n# LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n"
+	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
+		t.Fatalf("write conf: %v", err)
+	}
+
+	if err := manager.configureApache("8.3.30", apacheHTTPPort); err != nil {
+		t.Fatalf("configure apache: %v", err)
+	}
+
+	updated, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read conf: %v", err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, "# zPanel phpMyAdmin BEGIN") {
+		t.Fatalf("expected phpmyadmin block in apache config: %s", text)
+	}
+	if !strings.Contains(text, "Alias /phpmyadmin/ \""+toForwardPath(phpMyAdminRoot)+"\"") {
+		t.Fatalf("expected phpmyadmin alias in apache config: %s", text)
+	}
+	if !strings.Contains(text, "SetHandler \"proxy:fcgi://127.0.0.1:"+strconv.Itoa(phpFastCGIPort("8.3.30"))+"/\"") {
+		t.Fatalf("expected phpmyadmin fastcgi handler: %s", text)
+	}
+	if !fileExists(manager.phpMyAdminConfigPath()) {
+		t.Fatal("expected phpmyadmin config.inc.php to be created")
+	}
+}
+
+func TestStartMySQLRejectsDifferentInstalledVersion(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	mysqlHome := filepath.Join(manager.paths().mysqlExtractDir, "mysql-8.4.8-winx64")
+	if err := os.MkdirAll(filepath.Join(mysqlHome, "bin"), 0o755); err != nil {
+		t.Fatalf("mkdir mysql dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mysqlHome, "bin", "mysqld.exe"), []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write mysqld.exe: %v", err)
+	}
+	if err := manager.saveInstalledVersionsMetadata(installedRuntimeVersions{"mysql": "8.4.8"}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+
+	_, err := manager.Start("mysql:8.0.43")
+	if err == nil {
+		t.Fatal("expected version mismatch error")
+	}
+	if !strings.Contains(err.Error(), "Installed version is 8.4.8") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStartPHPMyAdminRejectsDifferentInstalledVersion(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	phpMyAdminRoot := filepath.Join(manager.paths().phpMyAdminDir, "phpMyAdmin-5.2.3-all-languages")
+	if err := os.MkdirAll(phpMyAdminRoot, 0o755); err != nil {
+		t.Fatalf("mkdir phpmyadmin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(phpMyAdminRoot, "index.php"), []byte("<?php"), 0o644); err != nil {
+		t.Fatalf("write index.php: %v", err)
+	}
+	if err := manager.saveInstalledVersionsMetadata(installedRuntimeVersions{"phpmyadmin": "5.2.3"}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+
+	_, err := manager.Start("phpmyadmin:6.0")
+	if err == nil {
+		t.Fatal("expected version mismatch error")
+	}
+	if !strings.Contains(err.Error(), "Installed version is 5.2.3") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

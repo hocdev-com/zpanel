@@ -47,6 +47,9 @@ type runtimeApp struct {
 	CanStop                 bool              `json:"can_stop"`
 	CanOpen                 bool              `json:"can_open"`
 	CanUninstall            bool              `json:"can_uninstall"`
+	Dependencies            []string          `json:"dependencies,omitempty"`
+	MissingDependencies     []string          `json:"missing_dependencies,omitempty"`
+	DependencyMessage       string            `json:"dependency_message,omitempty"`
 }
 
 type runtimeAppsResponse struct {
@@ -99,6 +102,19 @@ type runtimeManager interface {
 
 type runtimeStartupChecker interface {
 	RunStartupChecks() error
+}
+
+type runtimeDependencyError struct {
+	AppID               string
+	Message             string
+	MissingDependencies []string
+}
+
+func (e *runtimeDependencyError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
 }
 
 func newAppInstallJob(appID string, version string, action string) *appInstallJob {
@@ -234,7 +250,7 @@ func (s *appState) handleAppAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch baseID {
-	case "apache", "php", "mysql", "stack":
+	case "apache", "php", "mysql", "phpmyadmin", "stack":
 	default:
 		writeJSONError(w, http.StatusBadRequest, "unsupported app id: "+appID)
 		return
@@ -351,6 +367,8 @@ func runtimeTargetsForAppID(appID string) []string {
 	switch baseID {
 	case "stack":
 		return []string{"apache", "mysql", "php"}
+	case "phpmyadmin":
+		return []string{"apache", "mysql", "php", "phpmyadmin"}
 	case "apache", "php", "mysql":
 		return []string{baseID}
 	default:

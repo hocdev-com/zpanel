@@ -1547,6 +1547,13 @@ button.ghost {
     white-space: nowrap;
 }
 
+.app-dependency-note {
+    margin-top: 6px;
+    color: #8a5a12;
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
 .website-tabs {
     display: flex;
     flex-wrap: wrap;

@@ -867,6 +867,7 @@ function appStoreRow(app) {
         : app.id;
     const jobKey = getInstallJobKey(app.id, displayVersion);
     const installJob = appInstallJobs.get(jobKey);
+    const baseAppId = String(app.id || "").split(":")[0];
 
     const badgeClass = app.id === "apache"
         ? "apache-badge"
@@ -878,6 +879,9 @@ function appStoreRow(app) {
 
     const statusClass = app.status === "running" ? "running" : app.status === "stopped" ? "stopped" : "not-installed";
     const statusLabel = app.status_label || "Not installed";
+    const dependencyNote = app.installed && app.dependency_message
+        ? `<div class="app-dependency-note">${escapeHTML(app.dependency_message)}</div>`
+        : "";
 
     // --- Operate buttons: install OR uninstall, never both ---
     let operateBtns = "";
@@ -885,14 +889,20 @@ function appStoreRow(app) {
     if (app.installed) {
         // Installed: show Start/Stop + Uninstall + Settings menu trigger
         const startStopBtn = app.can_start
-            ? `<button class="op-btn op-start" data-app-action="start" data-app-id="${app.id}">Start</button>`
+            ? `<button class="op-btn op-start" data-app-action="start" data-app-id="${app.id}" data-app-version="${displayVersion}">Start</button>`
             : app.can_stop
-                ? `<button class="op-btn op-stop warn" data-app-action="stop" data-app-id="${app.id}">Stop</button>`
+                ? `<button class="op-btn op-stop warn" data-app-action="stop" data-app-id="${app.id}" data-app-version="${displayVersion}">Stop</button>`
                 : "";
-        const uninstallBtn = app.can_uninstall
-            ? `<button class="op-btn op-uninstall" data-app-action="uninstall" data-app-id="${app.id}">Uninstall</button>`
+        const openBtn = !startStopBtn && baseAppId === "phpmyadmin" && app.url
+            ? `<button class="op-btn op-open" type="button" data-open-url="${escapeHTML(app.url)}">Open</button>`
             : "";
-        operateBtns = startStopBtn + uninstallBtn;
+        const blockedLabel = !startStopBtn && !openBtn && baseAppId !== "phpmyadmin" && app.dependency_message
+                ? `<span class="app-disabled-label">${escapeHTML(app.status_label || "Dependencies required")}</span>`
+            : "";
+        const uninstallBtn = app.can_uninstall
+            ? `<button class="op-btn op-uninstall" data-app-action="uninstall" data-app-id="${app.id}" data-app-version="${displayVersion}">Uninstall</button>`
+            : "";
+        operateBtns = openBtn + startStopBtn + blockedLabel + uninstallBtn;
         operateMenuBtn = `<button class="op-menu-btn" data-app-action="setting" data-app-id="${app.id}" data-app-version="${app._rowVersion || ""}" aria-label="Open settings" title="Settings"><span class="op-menu-dots" aria-hidden="true"></span></button>`;
     } else {
         // Not installed: show Install combo only
@@ -942,6 +952,7 @@ function appStoreRow(app) {
         </div>
         <div class="app-table-cell app-instructions-cell">
             <span>${app.description}</span>
+            ${dependencyNote}
         </div>
         <div class="app-table-cell">
             <button class="app-folder-btn ${!app.installed ? "disabled" : ""}" data-app-action="open-folder" data-app-id="${app.id}" ${!app.installed ? "disabled" : ""} title="Open install folder">
@@ -1040,7 +1051,13 @@ function buildGenericVersionRows(app) {
     return availableVersions.map((ver, idx) => {
         const isThisVersionInstalled = app.installed && String(app.version) === String(ver);
         const isShown = app.show_on_dashboard_versions ? app.show_on_dashboard_versions[ver] : (isThisVersionInstalled && app.show_on_dashboard);
-        const canInstall = Boolean(app.can_install) && !isThisVersionInstalled;
+        const hasDownload = Boolean(app.download_urls?.[ver] || app.download_url);
+        const canInstall = !isThisVersionInstalled && (app.developer !== "custom" || hasDownload);
+        const statusLabel = isThisVersionInstalled
+            ? app.status_label
+            : canInstall
+                ? "Not installed"
+                : (app.can_install === false ? (app.status_label || "Configured") : "Not installed");
         
         return {
             ...app,
@@ -1056,7 +1073,7 @@ function buildGenericVersionRows(app) {
             can_start: isThisVersionInstalled ? app.can_start : false,
             can_stop: isThisVersionInstalled ? app.can_stop : false,
             status: isThisVersionInstalled ? app.status : "not-installed",
-            status_label: isThisVersionInstalled ? app.status_label : (app.can_install === false ? (app.status_label || "Configured") : "Not installed"),
+            status_label: statusLabel,
             show_on_dashboard: isShown,
             id: app.id, // Generic apps keep their base ID for API calls
         };
@@ -2094,7 +2111,8 @@ async function startInstallJob(id, version = "") {
 }
 
 function formatAppActionLabel(action, id, version = "") {
-    const appName = latestAppsPayload.find((app) => app.id === id)?.name || id.toUpperCase();
+    const normalizedId = String(id || "").split(":")[0];
+    const appName = latestAppsPayload.find((app) => app.id === id || app.id === normalizedId)?.name || normalizedId.toUpperCase();
     if (action === "install") {
         return version ? `Installing ${appName} ${version}...` : `Installing ${appName}...`;
     }
@@ -2310,6 +2328,15 @@ websiteListEl.addEventListener("click", async (event) => {
 });
 
 appStoreListEl.addEventListener("click", async (event) => {
+    const openTarget = event.target.closest("[data-open-url]");
+    if (openTarget) {
+        const url = String(openTarget.dataset.openUrl || "").trim();
+        if (url) {
+            window.open(url, "_blank", "noopener,noreferrer");
+        }
+        return;
+    }
+
     const versionToggle = event.target.closest("button[data-app-version-toggle]");
     if (versionToggle) {
         const row = versionToggle.closest(".app-table-row");

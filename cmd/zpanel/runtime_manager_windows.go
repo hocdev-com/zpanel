@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,15 +38,21 @@ var runtimeMySQLReleases = []runtimeRelease{
 	{Version: "8.0.43", URL: "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.43-winx64.zip", FileName: "mysql-8.0.43-winx64.zip"},
 }
 
+var runtimePHPMyAdminReleases = []runtimeRelease{
+	{Version: "5.2.3", URL: "https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.zip", FileName: "phpMyAdmin-5.2.3-all-languages.zip"},
+}
+
 func appStoreReleaseCatalog() map[string][]runtimeRelease {
 	return map[string][]runtimeRelease{
-		"apache": runtimeApacheReleases,
-		"php":    runtimePHPReleases,
-		"mysql":  runtimeMySQLReleases,
+		"apache":     runtimeApacheReleases,
+		"php":        runtimePHPReleases,
+		"mysql":      runtimeMySQLReleases,
+		"phpmyadmin": runtimePHPMyAdminReleases,
 	}
 }
 
 const apacheHTTPPort = 80
+const phpMyAdminMountPath = "/phpmyadmin/"
 
 var apacheHTTPFallbackPorts = []int{8081, 8088}
 
@@ -57,30 +64,35 @@ type windowsRuntimeManager struct {
 }
 
 type runtimePaths struct {
-	projectRoot      string
-	runtimeRoot      string
-	downloadsDir     string
-	apacheExtractDir string
-	phpRoot          string
-	mysqlExtractDir  string
-	mysqlDataDir     string
-	mysqlTempDir     string
-	myIniPath        string
-	apacheZip        string
-	phpZip           string
-	mysqlZip         string
+	projectRoot       string
+	runtimeRoot       string
+	downloadsDir      string
+	apacheExtractDir  string
+	phpRoot           string
+	mysqlExtractDir   string
+	mysqlDataDir      string
+	mysqlTempDir      string
+	phpMyAdminDir     string
+	phpMyAdminTempDir string
+	myIniPath         string
+	apacheZip         string
+	phpZip            string
+	mysqlZip          string
+	phpMyAdminZip     string
 }
 
 type runtimeInstallPlan struct {
-	needApache bool
-	needPHP    bool
-	needMySQL  bool
+	needApache     bool
+	needPHP        bool
+	needMySQL      bool
+	needPHPMyAdmin bool
 }
 
 type runtimeSelection struct {
-	Apache runtimeRelease
-	PHP    runtimeRelease
-	MySQL  runtimeRelease
+	Apache     runtimeRelease
+	PHP        runtimeRelease
+	MySQL      runtimeRelease
+	PHPMyAdmin runtimeRelease
 }
 
 type installedRuntimeVersions map[string]string
@@ -115,20 +127,14 @@ func (m *windowsRuntimeManager) Install(appID string, version string, onProgress
 		onProgress(appProgressEvent{Percent: 100, Message: "Install completed."})
 	}
 
-	// Small delay to ensure file system is synced before listing
-	time.Sleep(500 * time.Millisecond)
-
-	return runtimeAppsResponse{
-		Apps:    m.listApps(),
-		Message: "Runtime provisioned successfully.",
-	}, nil
+	response, err := m.autoStartAfterInstall(appID, version)
+	if err != nil {
+		return runtimeAppsResponse{}, err
+	}
+	return response, nil
 }
 
 func (m *windowsRuntimeManager) Start(appID string) (runtimeAppsResponse, error) {
-	if !m.appInstalled(appID) {
-		return runtimeAppsResponse{}, errors.New("application is not installed yet. Use Install first.")
-	}
-
 	baseID := appID
 	version := ""
 	if strings.Contains(appID, ":") {
@@ -141,10 +147,19 @@ func (m *windowsRuntimeManager) Start(appID string) (runtimeAppsResponse, error)
 
 	switch baseID {
 	case "apache":
+		if !m.appInstalled("apache") {
+			return runtimeAppsResponse{}, errors.New("application is not installed yet. Use Install first.")
+		}
+		if err := validateSingleRuntimeVersion("Apache", m.installedApacheVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
 		if err := m.startApache(); err != nil {
 			return runtimeAppsResponse{}, err
 		}
 	case "php":
+		if !m.appInstalled(appID) {
+			return runtimeAppsResponse{}, errors.New("application is not installed yet. Use Install first.")
+		}
 		if version == "" {
 			version = m.currentPHPVersion()
 		}
@@ -155,7 +170,23 @@ func (m *windowsRuntimeManager) Start(appID string) (runtimeAppsResponse, error)
 			return runtimeAppsResponse{}, err
 		}
 	case "mysql":
+		if !m.appInstalled("mysql") {
+			return runtimeAppsResponse{}, errors.New("application is not installed yet. Use Install first.")
+		}
+		if err := validateSingleRuntimeVersion("MySQL", m.installedMySQLVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
 		if err := m.startMySQL(); err != nil {
+			return runtimeAppsResponse{}, err
+		}
+	case "phpmyadmin":
+		if !m.appInstalled("phpmyadmin") {
+			return runtimeAppsResponse{}, errors.New("application is not installed yet. Use Install first.")
+		}
+		if err := validateSingleRuntimeVersion("phpMyAdmin", m.installedPHPMyAdminVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
+		if err := m.startPHPMyAdmin(); err != nil {
 			return runtimeAppsResponse{}, err
 		}
 	}
@@ -182,6 +213,9 @@ func (m *windowsRuntimeManager) Stop(appID string) (runtimeAppsResponse, error) 
 
 	switch baseID {
 	case "apache":
+		if err := validateSingleRuntimeVersion("Apache", m.installedApacheVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
 		if err := m.stopApache(); err != nil {
 			return runtimeAppsResponse{}, err
 		}
@@ -196,9 +230,17 @@ func (m *windowsRuntimeManager) Stop(appID string) (runtimeAppsResponse, error) 
 			return runtimeAppsResponse{}, err
 		}
 	case "mysql":
+		if err := validateSingleRuntimeVersion("MySQL", m.installedMySQLVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
 		if err := m.stopMySQL(); err != nil {
 			return runtimeAppsResponse{}, err
 		}
+	case "phpmyadmin":
+		if err := validateSingleRuntimeVersion("phpMyAdmin", m.installedPHPMyAdminVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
+		return runtimeAppsResponse{}, errors.New("phpmyadmin is served by Apache and cannot be stopped separately")
 	}
 
 	// Small delay to ensure status is updated
@@ -221,6 +263,9 @@ func (m *windowsRuntimeManager) Uninstall(appID string) (runtimeAppsResponse, er
 
 	switch baseID {
 	case "apache":
+		if err := validateSingleRuntimeVersion("Apache", m.installedApacheVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
 		if err := m.uninstallApache(); err != nil {
 			return runtimeAppsResponse{}, err
 		}
@@ -229,7 +274,17 @@ func (m *windowsRuntimeManager) Uninstall(appID string) (runtimeAppsResponse, er
 			return runtimeAppsResponse{}, err
 		}
 	case "mysql":
+		if err := validateSingleRuntimeVersion("MySQL", m.installedMySQLVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
 		if err := m.uninstallMySQL(); err != nil {
+			return runtimeAppsResponse{}, err
+		}
+	case "phpmyadmin":
+		if err := validateSingleRuntimeVersion("phpMyAdmin", m.installedPHPMyAdminVersionResolved(), version); err != nil {
+			return runtimeAppsResponse{}, err
+		}
+		if err := m.uninstallPHPMyAdmin(); err != nil {
 			return runtimeAppsResponse{}, err
 		}
 	}
@@ -246,18 +301,21 @@ func (m *windowsRuntimeManager) Uninstall(appID string) (runtimeAppsResponse, er
 func (m *windowsRuntimeManager) paths() runtimePaths {
 	runtimeRoot := filepath.Join(m.projectRoot, "data", "runtime")
 	return runtimePaths{
-		projectRoot:      m.projectRoot,
-		runtimeRoot:      runtimeRoot,
-		downloadsDir:     filepath.Join(runtimeRoot, "downloads"),
-		apacheExtractDir: filepath.Join(runtimeRoot, "apache-dist"),
-		phpRoot:          filepath.Join(runtimeRoot, "php"), // Base PHP dir
-		mysqlExtractDir:  filepath.Join(runtimeRoot, "mysql-dist"),
-		mysqlDataDir:     filepath.Join(runtimeRoot, "mysql-data"),
-		mysqlTempDir:     filepath.Join(runtimeRoot, "mysql-tmp"),
-		myIniPath:        filepath.Join(runtimeRoot, "my.ini"),
-		apacheZip:        filepath.Join(runtimeRoot, "downloads", runtimeApacheReleases[0].FileName),
-		phpZip:           filepath.Join(runtimeRoot, "downloads", runtimePHPReleases[0].FileName),
-		mysqlZip:         filepath.Join(runtimeRoot, "downloads", runtimeMySQLReleases[0].FileName),
+		projectRoot:       m.projectRoot,
+		runtimeRoot:       runtimeRoot,
+		downloadsDir:      filepath.Join(runtimeRoot, "downloads"),
+		apacheExtractDir:  filepath.Join(runtimeRoot, "apache-dist"),
+		phpRoot:           filepath.Join(runtimeRoot, "php"), // Base PHP dir
+		mysqlExtractDir:   filepath.Join(runtimeRoot, "mysql-dist"),
+		mysqlDataDir:      filepath.Join(runtimeRoot, "mysql-data"),
+		mysqlTempDir:      filepath.Join(runtimeRoot, "mysql-tmp"),
+		phpMyAdminDir:     filepath.Join(runtimeRoot, "phpmyadmin"),
+		phpMyAdminTempDir: filepath.Join(runtimeRoot, "phpmyadmin-tmp"),
+		myIniPath:         filepath.Join(runtimeRoot, "my.ini"),
+		apacheZip:         filepath.Join(runtimeRoot, "downloads", runtimeApacheReleases[0].FileName),
+		phpZip:            filepath.Join(runtimeRoot, "downloads", runtimePHPReleases[0].FileName),
+		mysqlZip:          filepath.Join(runtimeRoot, "downloads", runtimeMySQLReleases[0].FileName),
+		phpMyAdminZip:     filepath.Join(runtimeRoot, "downloads", runtimePHPMyAdminReleases[0].FileName),
 	}
 }
 
@@ -267,6 +325,11 @@ func (m *windowsRuntimeManager) apacheRoot() string {
 
 func (m *windowsRuntimeManager) mysqlRoot() string {
 	root, _ := resolveSingleChildDirectory(m.paths().mysqlExtractDir)
+	return root
+}
+
+func (m *windowsRuntimeManager) phpMyAdminRoot() string {
+	root, _ := resolveSingleChildDirectory(m.paths().phpMyAdminDir)
 	return root
 }
 
@@ -340,6 +403,52 @@ func (m *windowsRuntimeManager) mysqlExe() string {
 	return filepath.Join(m.mysqlRoot(), "bin", "mysqld.exe")
 }
 
+func (m *windowsRuntimeManager) phpMyAdminConfigPath() string {
+	return filepath.Join(m.phpMyAdminRoot(), "config.inc.php")
+}
+
+func (m *windowsRuntimeManager) installedApacheVersionResolved() string {
+	if version := strings.TrimSpace(m.installedVersionFromMetadata("apache")); version != "" {
+		return version
+	}
+	return strings.TrimSpace(installedApacheVersion(m.apacheRoot()))
+}
+
+func (m *windowsRuntimeManager) installedMySQLVersionResolved() string {
+	if version := strings.TrimSpace(m.installedVersionFromMetadata("mysql")); version != "" {
+		return version
+	}
+	return strings.TrimSpace(installedMySQLVersion(m.mysqlRoot()))
+}
+
+func (m *windowsRuntimeManager) installedPHPMyAdminVersionResolved() string {
+	if version := strings.TrimSpace(m.installedVersionFromMetadata("phpmyadmin")); version != "" {
+		return version
+	}
+
+	base := strings.ToLower(filepath.Base(filepath.Clean(m.phpMyAdminRoot())))
+	re := regexp.MustCompile(`(\d+\.\d+(?:\.\d+)*)`)
+	if match := re.FindStringSubmatch(base); len(match) >= 2 {
+		return strings.TrimSpace(match[1])
+	}
+	return ""
+}
+
+func validateSingleRuntimeVersion(appLabel string, installedVersion string, requestedVersion string) error {
+	requestedVersion = strings.TrimSpace(requestedVersion)
+	if requestedVersion == "" {
+		return nil
+	}
+	installedVersion = strings.TrimSpace(installedVersion)
+	if installedVersion == "" {
+		return fmt.Errorf("%s is not installed", appLabel)
+	}
+	if installedVersion != requestedVersion {
+		return fmt.Errorf("%s %s is not installed. Installed version is %s", appLabel, requestedVersion, installedVersion)
+	}
+	return nil
+}
+
 func (m *windowsRuntimeManager) appInstalled(appID string) bool {
 	baseID := appID
 	version := ""
@@ -368,6 +477,11 @@ func (m *windowsRuntimeManager) appInstalled(appID string) bool {
 			return fileExists(m.mysqlExe()) && strings.TrimSpace(m.installedVersionFromMetadata("mysql")) == version
 		}
 		return fileExists(m.mysqlExe())
+	case "phpmyadmin":
+		if version != "" {
+			return fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php")) && strings.TrimSpace(m.installedVersionFromMetadata("phpmyadmin")) == version
+		}
+		return fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php"))
 	default:
 		return false
 	}
@@ -487,14 +601,151 @@ func releaseURLs(releases []runtimeRelease) map[string]string {
 	return urls
 }
 
+type runtimeDependencyState struct {
+	Dependencies        []string
+	MissingDependencies []string
+	Message             string
+}
+
+func phpMyAdminSupportsPHPVersion(version string) bool {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) < 2 {
+		return false
+	}
+
+	major, errMajor := strconv.Atoi(parts[0])
+	minor, errMinor := strconv.Atoi(parts[1])
+	if errMajor != nil || errMinor != nil {
+		return false
+	}
+
+	if major < 7 {
+		return false
+	}
+	if major == 7 {
+		return minor >= 2
+	}
+	if major == 8 {
+		return minor < 4
+	}
+	return false
+}
+
+func containsString(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func compareVersionStrings(left string, right string) int {
+	leftParts := strings.Split(strings.TrimSpace(left), ".")
+	rightParts := strings.Split(strings.TrimSpace(right), ".")
+	limit := len(leftParts)
+	if len(rightParts) > limit {
+		limit = len(rightParts)
+	}
+
+	for i := 0; i < limit; i++ {
+		leftValue := 0
+		rightValue := 0
+		if i < len(leftParts) {
+			leftValue, _ = strconv.Atoi(leftParts[i])
+		}
+		if i < len(rightParts) {
+			rightValue, _ = strconv.Atoi(rightParts[i])
+		}
+		switch {
+		case leftValue < rightValue:
+			return -1
+		case leftValue > rightValue:
+			return 1
+		}
+	}
+	return 0
+}
+
+func (m *windowsRuntimeManager) phpMyAdminCompatiblePHPVersion(installed []string) string {
+	current := strings.TrimSpace(m.currentPHPVersion())
+	if current != "" && phpMyAdminSupportsPHPVersion(current) && fileExists(m.phpCgiExe(current)) {
+		return current
+	}
+
+	compatible := make([]string, 0, len(installed))
+	for _, version := range installed {
+		version = strings.TrimSpace(version)
+		if version == "" || !phpMyAdminSupportsPHPVersion(version) || !fileExists(m.phpCgiExe(version)) {
+			continue
+		}
+		compatible = append(compatible, version)
+	}
+	sort.Slice(compatible, func(i, j int) bool {
+		return compareVersionStrings(compatible[i], compatible[j]) > 0
+	})
+	if len(compatible) == 0 {
+		return ""
+	}
+	return compatible[0]
+}
+
+func (m *windowsRuntimeManager) phpMyAdminDependencyState(apacheInstalled bool, apacheRunning bool, mysqlInstalled bool, mysqlRunning bool, installedPHPs []string, runningPHPs []string) runtimeDependencyState {
+	state := runtimeDependencyState{
+		Dependencies: []string{"Apache", "MySQL", "PHP 7.2-8.3"},
+	}
+
+	switch {
+	case !apacheInstalled:
+		state.MissingDependencies = append(state.MissingDependencies, "Install Apache")
+	case !apacheRunning:
+		state.MissingDependencies = append(state.MissingDependencies, "Start Apache")
+	}
+
+	switch {
+	case !mysqlInstalled:
+		state.MissingDependencies = append(state.MissingDependencies, "Install MySQL")
+	case !mysqlRunning:
+		state.MissingDependencies = append(state.MissingDependencies, "Start MySQL")
+	}
+
+	phpVersion := m.phpMyAdminCompatiblePHPVersion(installedPHPs)
+	switch {
+	case phpVersion == "":
+		state.MissingDependencies = append(state.MissingDependencies, "Install a compatible PHP runtime (7.2-8.3)")
+	case !containsString(runningPHPs, phpVersion):
+		state.MissingDependencies = append(state.MissingDependencies, "Start PHP "+phpVersion)
+	}
+
+	if len(state.MissingDependencies) == 0 {
+		state.Message = "Requires Apache, MySQL, and a compatible PHP runtime (7.2-8.3)."
+		return state
+	}
+
+	state.Message = "Requires Apache and MySQL running, plus a compatible PHP runtime (7.2-8.3). Missing: " + strings.Join(state.MissingDependencies, "; ") + "."
+	return state
+}
+
+func (m *windowsRuntimeManager) apacheConfigHasPHPMyAdminAlias() bool {
+	content, err := os.ReadFile(m.httpdConfPath())
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(content), "# zPanel phpMyAdmin BEGIN")
+}
+
 func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	apacheReleases := appStoreEffectiveReleases(m.projectRoot, "apache")
 	phpReleases := appStoreEffectiveReleases(m.projectRoot, "php")
 	mysqlReleases := appStoreEffectiveReleases(m.projectRoot, "mysql")
+	phpMyAdminReleases := appStoreEffectiveReleases(m.projectRoot, "phpmyadmin")
 	apacheInstalled := fileExists(m.apacheExe())
 	mysqlInstalled := fileExists(m.mysqlExe())
+	phpMyAdminInstalled := fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php"))
 	apacheVersion := versionOrDefault(m.installedVersionFromMetadata("apache"), apacheReleases[0].Version)
 	mysqlVersion := versionOrDefault(m.installedVersionFromMetadata("mysql"), mysqlReleases[0].Version)
+	phpMyAdminVersion := versionOrDefault(m.installedVersionFromMetadata("phpmyadmin"), phpMyAdminReleases[0].Version)
 	apachePort := m.configuredHTTPPort()
 	if apachePort == 0 {
 		apachePort = apacheHTTPPort
@@ -558,6 +809,28 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 
 	apps = append(apps, newRuntimeApp("mysql", "MySQL", mysqlVersion, availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled))
 
+	phpMyAdminDeps := m.phpMyAdminDependencyState(apacheInstalled, apacheRunning, mysqlInstalled, mysqlRunning, installedPHPs, runningPHPs)
+	phpMyAdminReady := phpMyAdminInstalled &&
+		len(phpMyAdminDeps.MissingDependencies) == 0 &&
+		m.apacheConfigHasPHPMyAdminAlias()
+	phpMyAdminInstallPath := ""
+	if phpMyAdminInstalled {
+		phpMyAdminInstallPath = m.phpMyAdminRoot()
+	}
+	phpMyAdminURL := ""
+	if phpMyAdminReady {
+		phpMyAdminURL = formatPortURL("127.0.0.1", apachePort, phpMyAdminMountPath)
+	}
+	phpMyAdminApp := newRuntimeApp("phpmyadmin", "phpMyAdmin", phpMyAdminVersion, availableVersions(phpMyAdminReleases), "phpMyAdmin web client served through the bundled Apache and PHP stack.", phpMyAdminInstallPath, phpMyAdminInstalled, phpMyAdminReady, strconv.Itoa(apachePort), phpMyAdminURL, releaseURLs(phpMyAdminReleases), phpMyAdminInstalled && !phpMyAdminReady && len(phpMyAdminDeps.MissingDependencies) == 0, false, phpMyAdminReady, phpMyAdminInstalled)
+	phpMyAdminApp.Dependencies = append([]string(nil), phpMyAdminDeps.Dependencies...)
+	phpMyAdminApp.MissingDependencies = append([]string(nil), phpMyAdminDeps.MissingDependencies...)
+	phpMyAdminApp.DependencyMessage = phpMyAdminDeps.Message
+	if phpMyAdminInstalled && len(phpMyAdminDeps.MissingDependencies) > 0 {
+		phpMyAdminApp.Status = "stopped"
+		phpMyAdminApp.StatusLabel = "Dependencies required"
+	}
+	apps = append(apps, phpMyAdminApp)
+
 	return apps
 }
 
@@ -584,6 +857,8 @@ func buildInstallPlan(appID string) runtimeInstallPlan {
 		return runtimeInstallPlan{needPHP: true}
 	case "mysql":
 		return runtimeInstallPlan{needMySQL: true}
+	case "phpmyadmin":
+		return runtimeInstallPlan{needPHPMyAdmin: true}
 	case "stack":
 		return runtimeInstallPlan{needApache: true, needPHP: true, needMySQL: true}
 	default:
@@ -596,6 +871,9 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 	dirs := []string{paths.runtimeRoot, paths.downloadsDir}
 	if plan.needMySQL {
 		dirs = append(dirs, paths.mysqlDataDir, paths.mysqlTempDir)
+	}
+	if plan.needPHPMyAdmin {
+		dirs = append(dirs, paths.phpMyAdminDir, paths.phpMyAdminTempDir)
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -610,6 +888,11 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 	}
 	if plan.needMySQL && shouldReplaceRuntime(m.installedVersionFromMetadata("mysql"), selection.MySQL.Version, fileExists(m.mysqlExe())) {
 		if err := m.uninstallMySQL(); err != nil {
+			return err
+		}
+	}
+	if plan.needPHPMyAdmin && shouldReplaceRuntime(m.installedVersionFromMetadata("phpmyadmin"), selection.PHPMyAdmin.Version, fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php"))) {
+		if err := m.uninstallPHPMyAdmin(); err != nil {
 			return err
 		}
 	}
@@ -632,6 +915,12 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 			return err
 		}
 	}
+	if plan.needPHPMyAdmin {
+		paths.phpMyAdminZip = filepath.Join(paths.downloadsDir, selection.PHPMyAdmin.FileName)
+		if err := downloadFile(selection.PHPMyAdmin.URL, paths.phpMyAdminZip, "phpMyAdmin", 70, 78, onProgress); err != nil {
+			return err
+		}
+	}
 
 	if plan.needApache && !fileExists(m.apacheExe()) {
 		reportProgress(onProgress, 82, "Extracting...")
@@ -651,6 +940,12 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 			return err
 		}
 	}
+	if plan.needPHPMyAdmin && !fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php")) {
+		reportProgress(onProgress, 92, "Extracting...")
+		if err := expandZipFresh(paths.phpMyAdminZip, paths.phpMyAdminDir); err != nil {
+			return err
+		}
+	}
 
 	reportProgress(onProgress, 94, "Configuring...")
 	if plan.needPHP {
@@ -666,6 +961,20 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 	if plan.needMySQL {
 		if err := m.configureMySQL(); err != nil {
 			return err
+		}
+	}
+	if plan.needPHPMyAdmin {
+		if err := m.ensurePHPMyAdminConfig(); err != nil {
+			return err
+		}
+		if fileExists(m.httpdConfPath()) {
+			httpPort := m.configuredHTTPPort()
+			if httpPort == 0 {
+				httpPort = apacheHTTPPort
+			}
+			if err := m.configureApache(m.currentPHPVersion(), httpPort); err != nil {
+				return err
+			}
 		}
 	}
 	return m.recordInstalledVersions(plan, selection)
@@ -727,9 +1036,10 @@ func (m *windowsRuntimeManager) buildRuntimeSelection(appID string, version stri
 	mysqlReleases := appStoreEffectiveReleases(m.projectRoot, "mysql")
 
 	selection := runtimeSelection{
-		Apache: apacheReleases[0],
-		PHP:    phpReleases[0],
-		MySQL:  mysqlReleases[0],
+		Apache:     apacheReleases[0],
+		PHP:        phpReleases[0],
+		MySQL:      mysqlReleases[0],
+		PHPMyAdmin: runtimePHPMyAdminReleases[0],
 	}
 
 	var err error
@@ -740,6 +1050,8 @@ func (m *windowsRuntimeManager) buildRuntimeSelection(appID string, version stri
 		selection.PHP, err = pickRelease(phpReleases, version)
 	case "mysql":
 		selection.MySQL, err = pickRelease(mysqlReleases, version)
+	case "phpmyadmin":
+		selection.PHPMyAdmin, err = pickRelease(runtimePHPMyAdminReleases, version)
 	default:
 		err = nil
 	}
@@ -822,6 +1134,10 @@ func (m *windowsRuntimeManager) installedVersionFromMetadata(appID string) strin
 		if !fileExists(m.mysqlExe()) {
 			return ""
 		}
+	case "phpmyadmin":
+		if !fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php")) {
+			return ""
+		}
 	}
 	return version
 }
@@ -838,6 +1154,9 @@ func (m *windowsRuntimeManager) recordInstalledVersions(plan runtimeInstallPlan,
 		}
 		if plan.needMySQL && fileExists(m.mysqlExe()) {
 			metadata["mysql"] = strings.TrimSpace(selection.MySQL.Version)
+		}
+		if plan.needPHPMyAdmin && fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php")) {
+			metadata["phpmyadmin"] = strings.TrimSpace(selection.PHPMyAdmin.Version)
 		}
 	})
 }
@@ -865,6 +1184,156 @@ func (m *windowsRuntimeManager) ensureApacheLandingPage() error {
 	}
 	indexHTML := "<!doctype html><html><head><meta charset=\"utf-8\"><title>zPanel Bundled Stack</title></head><body><h1>zPanel Bundled Stack</h1><p>Apache is running from data/runtime.</p></body></html>"
 	return os.WriteFile(filepath.Join(htdocs, "index.html"), []byte(indexHTML), 0o644)
+}
+
+func randomHexString(length int) (string, error) {
+	if length <= 0 {
+		return "", nil
+	}
+	buf := make([]byte, (length+1)/2)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	value := fmt.Sprintf("%x", buf)
+	if len(value) > length {
+		value = value[:length]
+	}
+	return value, nil
+}
+
+func (m *windowsRuntimeManager) ensurePHPMyAdminConfig() error {
+	root := m.phpMyAdminRoot()
+	if !fileExists(filepath.Join(root, "index.php")) {
+		return nil
+	}
+	if err := os.MkdirAll(m.paths().phpMyAdminTempDir, 0o755); err != nil {
+		return err
+	}
+	if fileExists(m.phpMyAdminConfigPath()) {
+		return nil
+	}
+
+	secret, err := randomHexString(32)
+	if err != nil {
+		return err
+	}
+
+	config := strings.Join([]string{
+		"<?php",
+		"$cfg['blowfish_secret'] = '" + secret + "';",
+		"$i = 0;",
+		"$i++;",
+		"$cfg['Servers'][$i]['auth_type'] = 'cookie';",
+		"$cfg['Servers'][$i]['host'] = '127.0.0.1';",
+		"$cfg['Servers'][$i]['port'] = '3307';",
+		"$cfg['Servers'][$i]['compress'] = false;",
+		"$cfg['Servers'][$i]['AllowNoPassword'] = true;",
+		"$cfg['TempDir'] = '" + addPHPStringSlashes(toForwardPath(m.paths().phpMyAdminTempDir)) + "';",
+		"",
+	}, "\r\n")
+
+	return os.WriteFile(m.phpMyAdminConfigPath(), []byte(config), 0o644)
+}
+
+func addPHPStringSlashes(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+	return replacer.Replace(value)
+}
+
+func (m *windowsRuntimeManager) phpMyAdminApacheBlock() string {
+	root := m.phpMyAdminRoot()
+	if !fileExists(filepath.Join(root, "index.php")) {
+		return ""
+	}
+
+	phpVersion := m.phpMyAdminCompatiblePHPVersion(m.getInstalledPHPVersions())
+	if phpVersion == "" {
+		return ""
+	}
+
+	rootForward := toForwardPath(root)
+	port := phpFastCGIPort(phpVersion)
+	return "\r\n# zPanel phpMyAdmin BEGIN\r\n" +
+		"Alias " + phpMyAdminMountPath + " \"" + rootForward + "\"\r\n" +
+		"<Proxy \"fcgi://127.0.0.1:" + strconv.Itoa(port) + "/\" enablereuse=on max=10>\r\n" +
+		"</Proxy>\r\n" +
+		"ProxyFCGIBackendType GENERIC\r\n" +
+		"ProxyFCGISetEnvIf \"true\" SCRIPT_FILENAME \"%{reqenv:DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}\"\r\n" +
+		"ProxyFCGISetEnvIf \"true\" PATH_TRANSLATED \"%{reqenv:DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}\"\r\n" +
+		"<Directory \"" + rootForward + "\">\r\n" +
+		"    Options FollowSymLinks ExecCGI\r\n" +
+		"    AllowOverride None\r\n" +
+		"    DirectoryIndex index.php index.html\r\n" +
+		"    Require all granted\r\n" +
+		"    <FilesMatch \"\\.php$\">\r\n" +
+		"        SetHandler \"proxy:fcgi://127.0.0.1:" + strconv.Itoa(port) + "/\"\r\n" +
+		"    </FilesMatch>\r\n" +
+		"</Directory>\r\n" +
+		"# zPanel phpMyAdmin END\r\n"
+}
+
+func (m *windowsRuntimeManager) startPHPMyAdmin() error {
+	if !m.appInstalled("phpmyadmin") {
+		return errors.New("phpmyadmin is not installed yet. Use Install first.")
+	}
+
+	installedPHPs := m.getInstalledPHPVersions()
+	runningPHPs := m.runningPHPVersions(installedPHPs)
+	dependencies := m.phpMyAdminDependencyState(fileExists(m.apacheExe()), apacheListeningOnPort(m.configuredHTTPPortOrDefault()), fileExists(m.mysqlExe()), testTCPPort("127.0.0.1", 3307, 120*time.Millisecond), installedPHPs, runningPHPs)
+	if len(dependencies.MissingDependencies) > 0 {
+		return &runtimeDependencyError{
+			AppID:               "phpmyadmin",
+			Message:             dependencies.Message,
+			MissingDependencies: append([]string(nil), dependencies.MissingDependencies...),
+		}
+	}
+
+	if err := m.ensurePHPMyAdminConfig(); err != nil {
+		return err
+	}
+
+	httpPort := m.configuredHTTPPortOrDefault()
+	if err := m.configureApache(m.currentPHPVersion(), httpPort); err != nil {
+		return err
+	}
+	if err := m.stopApache(); err != nil {
+		return err
+	}
+	return m.startApache()
+}
+
+func (m *windowsRuntimeManager) configuredHTTPPortOrDefault() int {
+	httpPort := m.configuredHTTPPort()
+	if httpPort == 0 {
+		return apacheHTTPPort
+	}
+	return httpPort
+}
+
+func (m *windowsRuntimeManager) autoStartAfterInstall(appID string, version string) (runtimeAppsResponse, error) {
+	startTarget := strings.ToLower(strings.TrimSpace(appID))
+	if strings.Contains(startTarget, ":") {
+		startTarget = strings.SplitN(startTarget, ":", 2)[0]
+	}
+	if startTarget == "php" && strings.TrimSpace(version) != "" {
+		startTarget = "php:" + strings.TrimSpace(version)
+	}
+
+	response, err := m.Start(startTarget)
+	if err != nil {
+		var dependencyErr *runtimeDependencyError
+		if errors.As(err, &dependencyErr) {
+			time.Sleep(500 * time.Millisecond)
+			return runtimeAppsResponse{
+				Apps:    m.listApps(),
+				Message: "Installed, but not started. " + dependencyErr.Error(),
+			}, nil
+		}
+		return runtimeAppsResponse{}, err
+	}
+
+	response.Message = "Application installed and started successfully."
+	return response, nil
 }
 
 func (m *windowsRuntimeManager) configurePHP(version string) error {
@@ -1205,6 +1674,7 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string, httpPort int)
 	conf = regexp.MustCompile(`(?m)^\s*AddHandler application/x-httpd-php \.php\r?\n?`).ReplaceAllString(conf, "")
 	conf = regexp.MustCompile(`(?m)^\s*AddType application/x-httpd-php \.php\r?\n?`).ReplaceAllString(conf, "")
 	conf = regexp.MustCompile(`(?s)\r?\n# zPanel PHP BEGIN\r?\n.*?# zPanel PHP END\r?\n?`).ReplaceAllString(conf, "\r\n")
+	conf = regexp.MustCompile(`(?s)\r?\n# zPanel phpMyAdmin BEGIN\r?\n.*?# zPanel phpMyAdmin END\r?\n?`).ReplaceAllString(conf, "\r\n")
 	conf = regexp.MustCompile(`(?m)^Include conf/extra/httpd-vhosts\.conf\r?$`).ReplaceAllString(conf, "#Include conf/extra/httpd-vhosts.conf")
 	conf = regexp.MustCompile(`(?m)^Include conf/extra/zpanel-vhosts\.conf\r?$`).ReplaceAllString(conf, "")
 	conf = regexp.MustCompile(`(?m)^IncludeOptional ".*?/etc/sites/\*/apache-vhost\.conf"\r?$`).ReplaceAllString(conf, "")
@@ -1251,12 +1721,15 @@ func (m *windowsRuntimeManager) configureApache(phpVersion string, httpPort int)
 			"</Directory>\r\n" +
 			"# zPanel PHP END\r\n"
 		conf += phpBlock
-		return os.WriteFile(m.httpdConfPath(), []byte(conf), 0o644)
+	}
+
+	if phpMyAdminBlock := m.phpMyAdminApacheBlock(); phpMyAdminBlock != "" {
+		conf += phpMyAdminBlock
 	}
 
 	_ = os.Remove(filepath.Join(m.apacheRoot(), "htdocs", "index.php"))
 	_ = os.Remove(m.phpInfoPath())
-	return nil
+	return os.WriteFile(m.httpdConfPath(), []byte(conf), 0o644)
 }
 
 func (m *windowsRuntimeManager) configureMySQL() error {
@@ -1448,14 +1921,36 @@ func (m *windowsRuntimeManager) uninstallMySQL() error {
 	return nil
 }
 
+func (m *windowsRuntimeManager) uninstallPHPMyAdmin() error {
+	paths := m.paths()
+	_ = os.RemoveAll(paths.phpMyAdminDir)
+	_ = os.RemoveAll(paths.phpMyAdminTempDir)
+	_ = os.Remove(paths.phpMyAdminZip)
+	_ = m.removeInstalledVersion("phpmyadmin")
+
+	if fileExists(m.httpdConfPath()) {
+		httpPort := m.configuredHTTPPortOrDefault()
+		if err := m.configureApache(m.currentPHPVersion(), httpPort); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *windowsRuntimeManager) InstallFolderFor(id string) string {
-	switch id {
+	baseID := strings.ToLower(strings.TrimSpace(id))
+	if strings.Contains(baseID, ":") {
+		baseID = strings.SplitN(baseID, ":", 2)[0]
+	}
+	switch baseID {
 	case "apache":
 		return m.apacheRoot()
 	case "php":
 		return m.paths().phpRoot
 	case "mysql":
 		return m.mysqlRoot()
+	case "phpmyadmin":
+		return m.phpMyAdminRoot()
 	}
 	return m.paths().runtimeRoot
 }
@@ -1468,13 +1963,19 @@ func (m *windowsRuntimeManager) InstallFolderForVersion(id string, version strin
 }
 
 func (m *windowsRuntimeManager) ConfigFileFor(id string) string {
-	switch id {
+	baseID := strings.ToLower(strings.TrimSpace(id))
+	if strings.Contains(baseID, ":") {
+		baseID = strings.SplitN(baseID, ":", 2)[0]
+	}
+	switch baseID {
 	case "apache":
 		return m.httpdConfPath()
 	case "php":
 		return m.phpIniPath("")
 	case "mysql":
 		return m.paths().myIniPath
+	case "phpmyadmin":
+		return m.phpMyAdminConfigPath()
 	}
 	return ""
 }

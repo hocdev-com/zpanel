@@ -141,6 +141,10 @@ func appStoreSettingsDBPath(projectRoot string) string {
 // Removed hardcoded appIDName helper
 
 func defaultAppStoreReleaseTitle(appID string, version string) string {
+	switch strings.ToLower(strings.TrimSpace(appID)) {
+	case "phpmyadmin":
+		return strings.TrimSpace("phpMyAdmin " + version)
+	}
 	return strings.TrimSpace(strings.Title(appID) + " " + version)
 }
 
@@ -152,6 +156,8 @@ func defaultAppStoreReleaseInstructions(appID string, version string) string {
 		return "Portable PHP runtime. Multiple versions supported per website."
 	case "mysql":
 		return "Portable MySQL server stored in data/runtime."
+	case "phpmyadmin":
+		return "phpMyAdmin web client served through the bundled Apache and PHP stack."
 	default:
 		return fmt.Sprintf("Instructions for %s %s.", strings.Title(appID), version)
 	}
@@ -291,6 +297,129 @@ func valueAtBool(values map[string]map[string]bool, appID string, version string
 	return values[appID][version]
 }
 
+func appStoreAliasTarget(appID string, settings appStoreSettingsFile) string {
+	appID = strings.ToLower(strings.TrimSpace(appID))
+	if appID == "" {
+		return ""
+	}
+	if appID == "phpmyadmin" {
+		return "phpmyadmin"
+	}
+
+	for _, version := range collectAppStoreSettingsVersions(appID, nil, settings) {
+		title := strings.ToLower(strings.TrimSpace(valueAt(settings.Titles, appID, version)))
+		downloadURL := strings.ToLower(strings.TrimSpace(valueAt(settings.Downloads, appID, version)))
+		if strings.Contains(title, "phpmyadmin") || strings.Contains(downloadURL, "phpmyadmin") {
+			return "phpmyadmin"
+		}
+	}
+
+	return ""
+}
+
+func appStoreSourceIDs(appID string, settings appStoreSettingsFile) []string {
+	appID = strings.ToLower(strings.TrimSpace(appID))
+	if appID == "" {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	add := func(id string, values *[]string) {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		*values = append(*values, id)
+	}
+
+	ids := make([]string, 0, 1)
+	add(appID, &ids)
+	if appID != "phpmyadmin" {
+		return ids
+	}
+
+	for _, configuredID := range appStoreConfiguredAppIDs(settings) {
+		if configuredID == "phpmyadmin" {
+			continue
+		}
+		if appStoreAliasTarget(configuredID, settings) == "phpmyadmin" {
+			add(configuredID, &ids)
+		}
+	}
+
+	return ids
+}
+
+func mergedValueAt(values map[string]map[string]string, appID string, version string, settings appStoreSettingsFile) string {
+	for _, sourceID := range appStoreSourceIDs(appID, settings) {
+		if value := strings.TrimSpace(valueAt(values, sourceID, version)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func mergedValueAtBool(values map[string]map[string]bool, appID string, version string, settings appStoreSettingsFile) bool {
+	for _, sourceID := range appStoreSourceIDs(appID, settings) {
+		if valueAtBool(values, sourceID, version) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectMergedAppStoreSettingsVersions(appID string, baseReleases []runtimeRelease, settings appStoreSettingsFile) []string {
+	versionSet := map[string]struct{}{}
+	versions := make([]string, 0, len(baseReleases))
+	for _, release := range baseReleases {
+		version := strings.TrimSpace(release.Version)
+		if version == "" {
+			continue
+		}
+		versionSet[version] = struct{}{}
+		versions = append(versions, version)
+	}
+
+	appendVersion := func(version string) {
+		version = strings.TrimSpace(version)
+		if version == "" {
+			return
+		}
+		if _, ok := versionSet[version]; ok {
+			return
+		}
+		versionSet[version] = struct{}{}
+		versions = append(versions, version)
+	}
+
+	for _, sourceID := range appStoreSourceIDs(appID, settings) {
+		for version := range settings.Downloads[sourceID] {
+			appendVersion(version)
+		}
+		for version := range settings.Titles[sourceID] {
+			appendVersion(version)
+		}
+		for version := range settings.Instructions[sourceID] {
+			appendVersion(version)
+		}
+		for version := range settings.Icons[sourceID] {
+			appendVersion(version)
+		}
+		for version := range settings.ShowOnDashboard[sourceID] {
+			appendVersion(version)
+		}
+	}
+
+	if len(versions) > len(baseReleases) {
+		sort.Strings(versions[len(baseReleases):])
+	}
+	return versions
+}
+
 // Removed legacy migration function
 
 func loadAppStoreSettingsFromDB(projectRoot string) appStoreSettingsFile {
@@ -424,9 +553,8 @@ func appStoreEffectiveReleases(projectRoot string, appID string) []runtimeReleas
 	copy(out, base)
 
 	saved := loadAppStoreSettingsFromDB(projectRoot)
-	overrides := saved.Downloads[appID]
 	for i := range out {
-		if overrideURL := strings.TrimSpace(overrides[out[i].Version]); overrideURL != "" {
+		if overrideURL := strings.TrimSpace(mergedValueAt(saved.Downloads, appID, out[i].Version, saved)); overrideURL != "" {
 			out[i].URL = overrideURL
 			if fileName := appStoreReleaseFileName(appID, out[i].Version, overrideURL); fileName != "" {
 				out[i].FileName = fileName
@@ -440,20 +568,23 @@ func appStoreEffectiveReleases(projectRoot string, appID string) []runtimeReleas
 	}
 
 	extraVersions := make([]string, 0)
-	for version, rawURL := range overrides {
+	for _, version := range collectMergedAppStoreSettingsVersions(appID, base, saved) {
 		version = strings.TrimSpace(version)
-		if version == "" || strings.TrimSpace(rawURL) == "" {
+		if version == "" {
 			continue
 		}
 		if _, ok := baseVersions[version]; ok {
 			continue
 		}
+		overrideURL := strings.TrimSpace(mergedValueAt(saved.Downloads, appID, version, saved))
+		if overrideURL == "" {
+			continue
+		}
 		extraVersions = append(extraVersions, version)
 	}
-	sort.Strings(extraVersions)
 
 	for _, version := range extraVersions {
-		overrideURL := strings.TrimSpace(overrides[version])
+		overrideURL := strings.TrimSpace(mergedValueAt(saved.Downloads, appID, version, saved))
 		out = append(out, runtimeRelease{
 			Version:  version,
 			URL:      overrideURL,
@@ -465,10 +596,10 @@ func appStoreEffectiveReleases(projectRoot string, appID string) []runtimeReleas
 }
 
 func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreSettingsResponse {
-	groupOrder := appStoreGroupOrder()
+	saved := loadAppStoreSettingsFromDB(projectRoot)
+	groupOrder := appStoreResponseGroupOrder(saved)
 	groups := make([]appStoreSettingsGroup, 0, len(groupOrder))
 	catalog := appStoreReleaseCatalog()
-	saved := loadAppStoreSettingsFromDB(projectRoot)
 
 	for _, appID := range groupOrder {
 		baseReleases := catalog[appID]
@@ -525,6 +656,38 @@ func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreS
 
 func appStoreGroupOrder() []string {
 	return []string{"apache", "php", "mysql", "database", "other"}
+}
+
+func appStoreResponseGroupOrder(settings appStoreSettingsFile) []string {
+	baseOrder := appStoreGroupOrder()
+	seen := make(map[string]struct{}, len(baseOrder))
+	order := make([]string, 0, len(baseOrder))
+
+	for _, appID := range baseOrder {
+		appID = strings.ToLower(strings.TrimSpace(appID))
+		if appID == "" {
+			continue
+		}
+		if _, ok := seen[appID]; ok {
+			continue
+		}
+		seen[appID] = struct{}{}
+		order = append(order, appID)
+	}
+
+	for _, appID := range appStoreConfiguredAppIDs(settings) {
+		appID = strings.ToLower(strings.TrimSpace(appID))
+		if appID == "" {
+			continue
+		}
+		if _, ok := seen[appID]; ok {
+			continue
+		}
+		seen[appID] = struct{}{}
+		order = append(order, appID)
+	}
+
+	return order
 }
 
 func collectAppStoreRequestVersions(req appStoreSettingsRequest, appID string) []string {
