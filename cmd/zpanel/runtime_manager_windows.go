@@ -4,6 +4,8 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -22,6 +24,8 @@ import (
 	"syscall"
 	"time"
 )
+
+const mysqlInitializeTimeout = 2 * time.Minute
 
 var runtimeApacheReleases = []runtimeRelease{
 	{Version: "2.4.66", URL: "https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.66-251206-Win64-VS17.zip", FileName: "httpd-2.4.66-251206-Win64-VS17.zip"},
@@ -2153,7 +2157,19 @@ func (m *windowsRuntimeManager) configureMySQL() error {
 		return nil
 	}
 
-	return runHiddenProcess(m.mysqlExe(), []string{"--defaults-file=" + m.paths().myIniPath, "--initialize-insecure"}, root, nil, true)
+	_ = os.Remove(m.mysqlPIDPath())
+	_ = os.Remove(filepath.Join(m.paths().mysqlDataDir, "mysqld.err"))
+
+	if err := runHiddenProcessWithTimeout(
+		m.mysqlExe(),
+		[]string{"--defaults-file=" + m.paths().myIniPath, "--initialize-insecure", "--console"},
+		root,
+		nil,
+		mysqlInitializeTimeout,
+	); err != nil {
+		return m.formatMySQLInitError(err)
+	}
+	return nil
 }
 
 func (m *windowsRuntimeManager) startApache() error {
@@ -2731,6 +2747,84 @@ func runHiddenProcess(exe string, args []string, dir string, env []string, wait 
 		return nil
 	}
 	return cmd.Wait()
+}
+
+func runHiddenProcessWithTimeout(exe string, args []string, dir string, env []string, timeout time.Duration) error {
+	if timeout <= 0 {
+		return runHiddenProcess(exe, args, dir, env, true)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = env
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	err := cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if summary := summarizeCommandOutput(output.String()); summary != "" {
+			return fmt.Errorf("timed out after %s: %s", timeout, summary)
+		}
+		return fmt.Errorf("timed out after %s", timeout)
+	}
+	if err != nil {
+		if summary := summarizeCommandOutput(output.String()); summary != "" {
+			return fmt.Errorf("%v: %s", err, summary)
+		}
+		return err
+	}
+	return nil
+}
+
+func summarizeCommandOutput(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	output = strings.Join(strings.Fields(output), " ")
+	if len(output) > 320 {
+		return output[:317] + "..."
+	}
+	return output
+}
+
+func readFileTail(path string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil || len(content) == 0 {
+		return ""
+	}
+	if len(content) > maxBytes {
+		content = content[len(content)-maxBytes:]
+	}
+	return summarizeCommandOutput(string(content))
+}
+
+func (m *windowsRuntimeManager) formatMySQLInitError(err error) error {
+	details := make([]string, 0, 2)
+	if err != nil {
+		if summary := summarizeCommandOutput(err.Error()); summary != "" {
+			details = append(details, summary)
+		}
+	}
+	if logTail := readFileTail(filepath.Join(m.paths().mysqlDataDir, "mysqld.err"), 2048); logTail != "" {
+		details = append(details, "mysqld.err: "+logTail)
+	}
+	if len(details) == 0 {
+		return errors.New("mysql initialization failed")
+	}
+	return fmt.Errorf("mysql initialization failed: %s", strings.Join(details, " | "))
 }
 
 func readPIDFile(path string) (int, error) {

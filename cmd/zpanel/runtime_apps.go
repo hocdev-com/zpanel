@@ -258,7 +258,11 @@ func (s *appState) handleAppAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if action == "install" {
-		job := s.startOrGetInstallJob(appID, version)
+		job, err := s.startOrGetInstallJob(appID, version)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, job.snapshot())
 		return
 	}
@@ -333,7 +337,90 @@ func (s *appState) runRuntimeAppsAction(action string, appID string, version str
 	}
 }
 
-func (s *appState) startOrGetInstallJob(appID string, version string) *appInstallJob {
+func overlapRuntimeTargets(a []string, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, item := range a {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if item == "" {
+			continue
+		}
+		seen[item] = struct{}{}
+	}
+	for _, item := range b {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func installConflictTargets(appID string) []string {
+	baseID := strings.ToLower(strings.TrimSpace(appID))
+	if strings.Contains(baseID, ":") {
+		baseID = strings.SplitN(baseID, ":", 2)[0]
+	}
+
+	switch baseID {
+	case "apache":
+		return []string{"apache"}
+	case "mysql":
+		return []string{"mysql"}
+	case "phpmyadmin":
+		return []string{"phpmyadmin"}
+	case "stack":
+		return []string{"apache", "mysql"}
+	default:
+		return nil
+	}
+}
+
+func installConflictMessage(appID string, version string, conflicting appInstallJobSnapshot) string {
+	requested := runtimeActionTarget(appID, version)
+	active := runtimeActionTarget(conflicting.AppID, conflicting.Version)
+	if requested == "" {
+		requested = strings.ToLower(strings.TrimSpace(appID))
+	}
+	if active == "" {
+		active = strings.ToLower(strings.TrimSpace(conflicting.AppID))
+	}
+	if active == requested {
+		return ""
+	}
+	return fmt.Sprintf("%s is currently installing. Wait for it to finish before installing %s", active, requested)
+}
+
+func (s *appState) findConflictingInstallJobLocked(appID string, version string) *appInstallJob {
+	requestedKey := appInstallJobKey(appID, version)
+	requestedTargets := installConflictTargets(appID)
+	if len(requestedTargets) == 0 {
+		return nil
+	}
+	for key, job := range s.appJobs {
+		if job == nil {
+			continue
+		}
+		snapshot := job.snapshot()
+		if snapshot.Status != "running" {
+			continue
+		}
+		if key == requestedKey {
+			continue
+		}
+		if overlapRuntimeTargets(requestedTargets, installConflictTargets(snapshot.AppID)) {
+			return job
+		}
+	}
+	return nil
+}
+
+func (s *appState) startOrGetInstallJob(appID string, version string) (*appInstallJob, error) {
 	s.appJobsMu.Lock()
 	defer s.appJobsMu.Unlock()
 
@@ -342,15 +429,20 @@ func (s *appState) startOrGetInstallJob(appID string, version string) *appInstal
 	if existing := s.appJobs[jobKey]; existing != nil {
 		snapshot := existing.snapshot()
 		if snapshot.Status == "running" {
-			return existing
+			return existing, nil
 		}
+	}
+
+	if conflict := s.findConflictingInstallJobLocked(appID, version); conflict != nil {
+		snapshot := conflict.snapshot()
+		return nil, errors.New(installConflictMessage(appID, version, snapshot))
 	}
 
 	job := newAppInstallJob(appID, version, "install")
 	s.appJobs[jobKey] = job
 
 	go s.runInstallJob(job)
-	return job
+	return job, nil
 }
 
 func (s *appState) getInstallJob(appID string, version string) *appInstallJob {

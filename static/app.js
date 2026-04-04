@@ -17,6 +17,9 @@ const folderBrowserNewDirectoryEl = document.getElementById("folder-browser-new-
 const sectionTitleEl = document.getElementById("section-title");
 const sectionCopyEl = document.getElementById("section-copy");
 const toastStackEl = document.getElementById("toast-stack");
+if (toastStackEl && toastStackEl.parentElement !== document.body) {
+    document.body.appendChild(toastStackEl);
+}
 const websiteModalEl = document.getElementById("website-modal");
 const websiteFormEl = document.getElementById("website-form");
 const websiteDomainInputEl = document.getElementById("domain");
@@ -104,6 +107,7 @@ let websitePathTouched = false;
 let appInstallJobs = new Map();
 let appInstallPollers = new Map();
 let appInstallPollRequests = new Set();
+let isPageUnloading = false;
 let appRefreshRequestSeq = 0;
 let appRefreshAppliedSeq = 0;
 let websiteRefreshRequestSeq = 0;
@@ -338,6 +342,9 @@ const viewConfig = {
 };
 
 function showResult(payload) {
+    if (isPageUnloading) {
+        return;
+    }
     const isError = typeof payload === "string" && payload.toLowerCase().startsWith("error:");
     const title = isError ? "Action Failed" : "Completed";
     const message = typeof payload === "string"
@@ -350,7 +357,28 @@ function showResult(payload) {
     scheduleToastRemoval(toast, 2600);
 }
 
+function showDedupedResult(key, payload, delayMs = 2600) {
+    if (isPageUnloading) {
+        return;
+    }
+
+    const isError = typeof payload === "string" && payload.toLowerCase().startsWith("error:");
+    const title = isError ? "Action Failed" : "Completed";
+    const message = typeof payload === "string"
+        ? payload.replace(/^Error:\s*/i, "")
+        : payload?.message || payload?.status || "Request completed.";
+    const toast = showPersistentToast(key, title, message, isError ? "error" : "success");
+    if (!toast) {
+        return;
+    }
+
+    scheduleToastRemoval(toast, delayMs);
+}
+
 function showPersistentToast(key, title, message, variant = "error") {
+    if (isPageUnloading) {
+        return null;
+    }
     const existingToast = persistentToastByKey.get(key);
     if (existingToast) {
         existingToast.querySelector(".toast-title").textContent = title;
@@ -368,6 +396,9 @@ function showPersistentToast(key, title, message, variant = "error") {
 
 function updatePersistentToast(key, title, message, variant = "error") {
     const toast = showPersistentToast(key, title, message, variant);
+    if (!toast) {
+        return;
+    }
     toast.className = `toast ${variant} persistent show`;
 }
 
@@ -426,8 +457,32 @@ function dismissToast(toast) {
 }
 
 function showConnectionError(error) {
+    if (isPageUnloading) {
+        return;
+    }
     const message = error?.message || "Failed to fetch";
     showPersistentToast("connection-status", "Action Failed", message, "error");
+}
+
+function stopInstallJobPolling() {
+    appInstallPollRequests.clear();
+    appInstallPollers.forEach((timer) => clearTimeout(timer));
+    appInstallPollers.clear();
+}
+
+function markPageUnloading() {
+    if (isPageUnloading) {
+        return;
+    }
+    isPageUnloading = true;
+
+    if (statusRefreshTimer) {
+        clearTimeout(statusRefreshTimer);
+        statusRefreshTimer = null;
+    }
+
+    stopInstallJobPolling();
+    persistentToastByKey.forEach((toast) => dismissToast(toast));
 }
 
 toastStackEl?.addEventListener("click", (event) => {
@@ -867,6 +922,7 @@ function appStoreRow(app) {
         : app.id;
     const jobKey = getInstallJobKey(app.id, displayVersion);
     const installJob = appInstallJobs.get(jobKey);
+    const installProgress = Math.max(0, Math.min(100, Number(installJob?.progress) || 0));
     const baseAppId = String(app.id || "").split(":")[0];
 
     const badgeClass = app.id === "apache"
@@ -880,7 +936,9 @@ function appStoreRow(app) {
     const statusClass = app.status === "running" ? "running" : app.status === "stopped" ? "stopped" : "not-installed";
     const statusLabel = app.status_label || "Not installed";
     const stackNote = app.dependency_message || app.compatibility_message || "";
-    const dependencyNote = app.installed && stackNote
+    const shouldShowDependencyNote = Boolean(app.dependency_message)
+        || (app.installed && Boolean(app.compatibility_message));
+    const dependencyNote = shouldShowDependencyNote && stackNote
         ? `<div class="app-dependency-note">${escapeHTML(stackNote)}</div>`
         : "";
 
@@ -915,9 +973,28 @@ function appStoreRow(app) {
     } else {
         // Not installed: show Install combo only
         const installVersion = displayVersion || "";
-        const installLabel = installJob ? "Install..." : "Install";
-        const isInstallDisabled = Boolean(installJob) || Boolean(app._installDisabled);
-        const isDisabled = isInstallDisabled ? "disabled" : "";
+        const installLabel = installJob ? "Installing..." : "Install";
+        const blockedInstallMessage = !installJob && app._installDisabled
+            ? String(app.dependency_message || app.status_label || "Installation is currently blocked.").trim()
+            : "";
+        const disabledAttr = installJob ? "disabled" : "";
+        const blockedActionAttrs = blockedInstallMessage
+            ? `data-app-blocked-message="${escapeHTML(blockedInstallMessage)}" aria-disabled="true"`
+            : "";
+        const blockedActionClass = blockedInstallMessage ? " app-blocked-action" : "";
+        const isDisabled = disabledAttr;
+        if (installJob) {
+            operateBtns = `
+                <div class="app-action-rail single">
+                    <div class="app-action-main">
+                        <button class="alt op-btn app-install-running" type="button" disabled style="--install-progress:${installProgress}%">
+                            <span class="app-install-running-label">${escapeHTML(installLabel)}</span>
+                            <span class="app-install-running-value">${installProgress}%</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else
         // For PHP per-version rows, no version dropdown — just a single Install button
         if (app.can_install === false) {
             operateBtns = `
@@ -931,7 +1008,7 @@ function appStoreRow(app) {
             operateBtns = `
                 <div class="app-action-rail single">
                     <div class="app-action-main">
-                        <button class="alt op-btn" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${isDisabled}>${installLabel}</button>
+                        <button class="alt op-btn${blockedActionClass}" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${disabledAttr} ${blockedActionAttrs}>${installLabel}</button>
                     </div>
                 </div>
             `;
@@ -999,16 +1076,6 @@ function appStoreRow(app) {
                     ${operateBtns}
                 </div>
                 ${operateMenuBtn}
-                ${(installJob && (!app._rowVersion || String(installJob.version) === String(app._rowVersion))) ? `
-                    <div class="app-install-progress">
-                        <div class="app-install-progress-head">
-                            <strong>${Math.max(0, Math.min(100, Number(installJob.progress) || 0))}%</strong>
-                        </div>
-                        <div class="app-install-progress-track">
-                            <div class="app-install-progress-bar" style="width:${Math.max(0, Math.min(100, Number(installJob.progress) || 0))}%"></div>
-                        </div>
-                    </div>
-                ` : ""}
             </div>
         </div>
     `;
@@ -1069,27 +1136,70 @@ function buildPHPVersionRows(app) {
     });
 }
 
+function findRunningInstallJobForApp(appId) {
+    const requestedId = String(appId || "").split(":")[0].toLowerCase();
+    if (!requestedId) {
+        return null;
+    }
+
+    for (const job of appInstallJobs.values()) {
+        if (!job) {
+            continue;
+        }
+
+        const jobId = String(job.app_id || "").split(":")[0].toLowerCase();
+        if (jobId !== requestedId) {
+            continue;
+        }
+
+        if (String(job.action || "").toLowerCase() !== "install") {
+            continue;
+        }
+
+        if (String(job.status || "").toLowerCase() !== "running") {
+            continue;
+        }
+
+        return job;
+    }
+
+    return null;
+}
+
 function buildGenericVersionRows(app) {
     const availableVersions = Array.isArray(app.available_versions) ? app.available_versions : [];
     if (availableVersions.length === 0) return [app];
     const baseAppId = String(app.id || "").split(":")[0].toLowerCase();
     const singleVersionInstall = baseAppId === "apache" || baseAppId === "mysql" || baseAppId === "phpmyadmin";
+    const runningInstallJob = singleVersionInstall ? findRunningInstallJobForApp(app.id) : null;
+    const runningInstallVersion = String(runningInstallJob?.version || app.selected_version || "").trim();
     
     return availableVersions.map((ver, idx) => {
         const isThisVersionInstalled = app.installed && String(app.version) === String(ver);
         const isShown = app.show_on_dashboard_versions ? app.show_on_dashboard_versions[ver] : (isThisVersionInstalled && app.show_on_dashboard);
         const hasDownload = Boolean(app.download_urls?.[ver] || app.download_url);
         const installBlockedByInstalledVersion = singleVersionInstall && app.installed && !isThisVersionInstalled;
+        const isThisVersionInstalling = Boolean(runningInstallVersion) && runningInstallVersion === String(ver);
+        const installBlockedByRunningJob = singleVersionInstall
+            && Boolean(runningInstallJob)
+            && !isThisVersionInstalling;
         const currentInstalledName = app.version_titles?.[app.version] || `${app.name} ${app.version}`;
         const nextVersionName = app.version_titles?.[ver] || `${app.name} ${ver}`;
+        const installingName = app.version_titles?.[runningInstallVersion] || `${app.name} ${runningInstallVersion}`;
         const conflictMessage = installBlockedByInstalledVersion
             ? `Uninstall ${currentInstalledName} before installing ${nextVersionName}.`
+            : installBlockedByRunningJob
+                ? `Wait for ${installingName} to finish installing before installing ${nextVersionName}.`
             : "";
         const canInstall = !isThisVersionInstalled && (app.developer !== "custom" || hasDownload);
         const statusLabel = isThisVersionInstalled
             ? app.status_label
             : installBlockedByInstalledVersion
                 ? "Stopped"
+            : isThisVersionInstalling
+                ? "Installing"
+            : installBlockedByRunningJob
+                ? "Installing"
             : canInstall
                 ? "Not installed"
                 : (app.can_install === false ? (app.status_label || "Configured") : "Not installed");
@@ -1098,7 +1208,7 @@ function buildGenericVersionRows(app) {
             ...app,
             _rowVersion: ver,
             _isFirstRow: idx === 0,
-            _installDisabled: installBlockedByInstalledVersion,
+            _installDisabled: installBlockedByInstalledVersion || installBlockedByRunningJob,
             name: app.version_titles?.[ver] || `${app.name} ${ver}`,
             description: app.version_instructions?.[ver] || app.description,
             icon: app.version_icons?.[ver] || app.icon,
@@ -1108,9 +1218,9 @@ function buildGenericVersionRows(app) {
             can_uninstall: isThisVersionInstalled,
             can_start: isThisVersionInstalled ? app.can_start : false,
             can_stop: isThisVersionInstalled ? app.can_stop : false,
-            status: isThisVersionInstalled ? app.status : "not-installed",
+            status: isThisVersionInstalled ? app.status : (isThisVersionInstalling ? "installing" : "not-installed"),
             status_label: statusLabel,
-            dependency_message: installBlockedByInstalledVersion ? conflictMessage : app.dependency_message,
+            dependency_message: (installBlockedByInstalledVersion || installBlockedByRunningJob) ? conflictMessage : app.dependency_message,
             show_on_dashboard: isShown,
             id: app.id, // Generic apps keep their base ID for API calls
         };
@@ -1200,6 +1310,10 @@ function createSoftwareCard(id, name, icon = "") {
 function renderApps(apps) {
     const appItems = Array.isArray(apps) ? apps : [];
     const appSignature = safeSerialize(appItems);
+    const scrollPosition = {
+        x: window.scrollX,
+        y: window.scrollY,
+    };
     latestAppsPayload = appItems;
     syncRunningInstallJobs(appItems);
 
@@ -1213,6 +1327,7 @@ function renderApps(apps) {
     if (appItems.length === 0) {
         appStoreListEl.textContent = "No portable apps available yet.";
         updateSoftwareSnapshot([]);
+        window.scrollTo(scrollPosition.x, scrollPosition.y);
         return;
     }
 
@@ -1222,6 +1337,47 @@ function renderApps(apps) {
 
     updateSoftwareSnapshot(appItems);
     syncPHPVersionOptions(appItems);
+    window.scrollTo(scrollPosition.x, scrollPosition.y);
+}
+
+function findAppStoreRow(appId, version = "") {
+    const requestedId = String(appId || "").trim();
+    if (!requestedId) {
+        return null;
+    }
+
+    const requestedVersion = String(version || "").trim();
+    const selector = requestedVersion
+        ? `.app-table-row[data-app-id="${CSS.escape(requestedId)}"][data-row-version="${CSS.escape(requestedVersion)}"]`
+        : `.app-table-row[data-app-id="${CSS.escape(requestedId)}"]:not([data-row-version])`;
+    return appStoreListEl?.querySelector(selector) || null;
+}
+
+function updateInstallJobProgressUI(id, version = "", job = null) {
+    const row = findAppStoreRow(id, version);
+    if (!row) {
+        return false;
+    }
+
+    const progressButton = row.querySelector(".app-install-running");
+    if (!progressButton) {
+        return false;
+    }
+
+    const progress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
+    progressButton.style.setProperty("--install-progress", `${progress}%`);
+
+    const labelEl = progressButton.querySelector(".app-install-running-label");
+    if (labelEl) {
+        labelEl.textContent = "Installing...";
+    }
+
+    const valueEl = progressButton.querySelector(".app-install-running-value");
+    if (valueEl) {
+        valueEl.textContent = `${progress}%`;
+    }
+
+    return true;
 }
 
 function getInstallJobKey(id, version = "") {
@@ -2202,9 +2358,12 @@ async function pollInstallJob(id, version = "") {
     try {
         const job = await api(`/api/apps/progress?id=${encodeURIComponent(id)}${version ? `&version=${encodeURIComponent(version)}` : ""}`);
         syncInstallJob(job, jobKey);
+        removePersistentToast("app-install-connection");
 
         if (job.status === "running") {
-            renderApps(latestAppsPayload);
+            if (!updateInstallJobProgressUI(id, version, job)) {
+                renderApps(latestAppsPayload);
+            }
             scheduleNext();
             return;
         }
@@ -2225,21 +2384,23 @@ async function pollInstallJob(id, version = "") {
         renderApps(latestAppsPayload);
         showResult(`Error: ${job.error || job.message || "Install failed."}`);
     } catch (error) {
+        if (isPageUnloading) {
+            return;
+        }
         const message = String(error?.message || "").trim();
         if (/no install job found/i.test(message)) {
             clearInstallJob(id, version);
-            removePersistentToast(`app-install-${jobKey}`);
+            removePersistentToast("app-install-connection");
             renderApps(latestAppsPayload);
             return;
         }
 
         updatePersistentToast(
-            `app-install-${jobKey}`,
+            "app-install-connection",
             "Connection interrupted",
-            "Trying to reconnect to the running download...",
+            "Trying to reconnect to the running downloads...",
             "error",
         );
-        renderApps(latestAppsPayload);
         scheduleNext(1500);
     } finally {
         appInstallPollRequests.delete(jobKey);
@@ -2376,6 +2537,10 @@ appStoreListEl.addEventListener("click", async (event) => {
 
     const versionToggle = event.target.closest("button[data-app-version-toggle]");
     if (versionToggle) {
+        if (versionToggle.dataset.appBlockedMessage) {
+            showDedupedResult("app-blocked-action", `Error: ${versionToggle.dataset.appBlockedMessage}`);
+            return;
+        }
         const row = versionToggle.closest(".app-table-row");
         const combo = versionToggle.closest("[data-app-install-combo]");
         const menu = combo?.querySelector("[data-app-version-menu]");
@@ -2420,6 +2585,11 @@ appStoreListEl.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-app-action]");
     if (!button) {
         document.querySelectorAll("[data-app-version-menu]").forEach((item) => item.setAttribute("hidden", ""));
+        return;
+    }
+
+    if (button.dataset.appBlockedMessage) {
+        showDedupedResult("app-blocked-action", `Error: ${button.dataset.appBlockedMessage}`);
         return;
     }
 
@@ -3123,6 +3293,9 @@ window.addEventListener("online", () => {
         setPanelOfflineState(error);
     });
 });
+
+window.addEventListener("beforeunload", markPageUnloading);
+window.addEventListener("pagehide", markPageUnloading);
 
 function scheduleStatusRefresh(immediate = false) {
     if (statusRefreshTimer) {
