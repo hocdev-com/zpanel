@@ -1768,8 +1768,8 @@ button.ghost {
     position: absolute;
     top: 14px;
     right: 14px;
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     border-radius: 999px;
     padding: 0;
     background: #7b8794;
@@ -1778,11 +1778,31 @@ button.ghost {
     line-height: 1;
 }
 
+.modal-close::before,
+.modal-close::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 2px;
+    margin-left: -6px;
+    margin-top: -1px;
+    border-radius: 999px;
+    background: #ffffff;
+}
+
 .modal-close::before {
-    content: "\00d7";
+    transform: rotate(45deg);
+}
+
+.modal-close::after {
+    transform: rotate(-45deg);
+}
+
+.modal-close::before,
+.modal-close::after {
     color: #ffffff;
-    font-size: 1.6rem;
-    line-height: 1;
 }
 
 .modal-head {
@@ -2180,6 +2200,50 @@ button.ghost {
 .website-create-form {
     display: grid;
     gap: 14px;
+}
+
+.domain-input-shell {
+    position: relative;
+    border: 1px solid #b7c9d8;
+    border-radius: var(--radius-sm);
+    background: #fbfdff;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.domain-input-shell:focus-within {
+    border-color: #7aa7c7;
+    box-shadow: 0 0 0 3px rgba(122, 167, 199, 0.16);
+}
+
+.domain-input-shell input {
+    position: relative;
+    z-index: 1;
+    border: 0;
+    background: transparent;
+}
+
+.domain-input-shell input:focus {
+    outline: none;
+}
+
+.domain-input-ghost {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    font: inherit;
+}
+
+.domain-input-ghost-prefix {
+    color: transparent;
+}
+
+.domain-input-ghost-suffix {
+    color: #9eb0c0;
 }
 
 .form-hint {

@@ -358,7 +358,7 @@
             <div class="modal-head">
                 <span class="eyebrow">Create Website</span>
                 <h3 id="website-modal-title">Add site</h3>
-                <p>Create a local website like <strong>lehau.test</strong> and serve it immediately from this machine.</p>
+                <p>Create a local website like <strong>domain.test</strong> and serve it immediately from this machine.</p>
             </div>
             <div class="website-modal-tabs">
                 <button class="website-modal-tab active" type="button">Create site</button>
@@ -368,7 +368,12 @@
             <form id="website-form" class="website-create-form">
                 <label>
                     Domain name
-                    <input id="domain" name="domain" placeholder="lehau.test" required />
+                    <div class="domain-input-shell">
+                        <div class="domain-input-ghost" aria-hidden="true">
+                            <span id="domain-ghost-prefix" class="domain-input-ghost-prefix"></span><span id="domain-ghost-suffix" class="domain-input-ghost-suffix"></span>
+                        </div>
+                        <input id="domain" name="domain" placeholder="domain.test" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url" required />
+                    </div>
                 </label>
                 <label>
                     Website path

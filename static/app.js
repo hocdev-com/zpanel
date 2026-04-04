@@ -20,6 +20,8 @@ const toastStackEl = document.getElementById("toast-stack");
 const websiteModalEl = document.getElementById("website-modal");
 const websiteFormEl = document.getElementById("website-form");
 const websiteDomainInputEl = document.getElementById("domain");
+const websiteDomainGhostPrefixEl = document.getElementById("domain-ghost-prefix");
+const websiteDomainGhostSuffixEl = document.getElementById("domain-ghost-suffix");
 const websitePathInputEl = document.getElementById("path");
 const websitePHPVersionEl = document.getElementById("php-version");
 const websiteSubmitButtonEl = websiteFormEl.querySelector("button[type='submit']");
@@ -35,6 +37,7 @@ const WEBSITE_CACHE_KEY = "zpanel:websites";
 const DEFAULT_PANEL_ALIAS = "zPanel";
 const DEFAULT_PANEL_TIMEZONE = "UTC";
 const DEFAULT_SITE_FOLDER = "www";
+const DEFAULT_DOMAIN_SUFFIX = ".test";
 const DEFAULT_PANEL_LANGUAGE = "en";
 const FALLBACK_TIMEZONES = [
     "UTC",
@@ -190,9 +193,59 @@ function buildWebsitePathPreview(domain = "") {
     return `${folder}/${normalizedDomain}`;
 }
 
+function sanitizeWebsiteDomainDraft(value = "") {
+    return String(value || "").toLowerCase().replace(/\s+/g, "").trim();
+}
+
+function shouldSuggestDefaultWebsiteSuffix(value = "") {
+    const draft = sanitizeWebsiteDomainDraft(value);
+    return Boolean(draft) && !draft.includes(".") && /^[a-z0-9-]+$/.test(draft);
+}
+
+function finalizeWebsiteDomainValue(value = "") {
+    const draft = sanitizeWebsiteDomainDraft(value);
+    if (!draft) {
+        return "";
+    }
+    return shouldSuggestDefaultWebsiteSuffix(draft) ? `${draft}${DEFAULT_DOMAIN_SUFFIX}` : draft;
+}
+
+function syncWebsiteDomainInputUI(options = {}) {
+    const { commit = false } = options;
+    const sanitized = sanitizeWebsiteDomainDraft(websiteDomainInputEl.value);
+    const nextValue = commit ? finalizeWebsiteDomainValue(sanitized) : sanitized;
+
+    if (websiteDomainInputEl.value !== nextValue) {
+        websiteDomainInputEl.value = nextValue;
+    }
+
+    const suffix = shouldSuggestDefaultWebsiteSuffix(nextValue) ? DEFAULT_DOMAIN_SUFFIX : "";
+    if (websiteDomainGhostPrefixEl) {
+        websiteDomainGhostPrefixEl.textContent = nextValue;
+    }
+    if (websiteDomainGhostSuffixEl) {
+        websiteDomainGhostSuffixEl.textContent = suffix;
+    }
+
+    const effectiveDomain = suffix ? `${nextValue}${suffix}` : nextValue;
+    websitePathInputEl.value = buildWebsitePathPreview(effectiveDomain);
+}
+
+function commitWebsiteDomainDefaultSuffix() {
+    const before = sanitizeWebsiteDomainDraft(websiteDomainInputEl.value);
+    const after = finalizeWebsiteDomainValue(before);
+    if (!after || after === before) {
+        syncWebsiteDomainInputUI();
+        return false;
+    }
+    websiteDomainInputEl.value = after;
+    syncWebsiteDomainInputUI();
+    return true;
+}
+
 function syncWebsitePathHint() {
     const preview = buildWebsitePathPreview("domain-name");
-    websitePathInputEl.value = buildWebsitePathPreview(websiteDomainInputEl.value);
+    syncWebsiteDomainInputUI();
     websitePathInputEl.placeholder = preview;
     if (websitePathHintEl) {
         websitePathHintEl.innerHTML = `Each website is created as <code>${escapeHTML(preview)}</code>, and the PHP version list is loaded from installed runtimes in App Store.`;
@@ -522,6 +575,32 @@ function formatUptime(totalSeconds) {
     return `${days} Day(s)`;
 }
 
+function formatSystemLabel(label) {
+    let value = String(label || "").trim();
+    if (!value) {
+        return "Unknown OS";
+    }
+
+    value = value
+        .replace(/\bBuild\s+\S+/gi, "")
+        .replace(/\b\d+\.\d+\.\d+(?:\.\d+)?\b/g, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+
+    const archMatch = value.match(/\b(x86_64|x64|x86|arm64|aarch64)\b$/i);
+    const arch = archMatch ? archMatch[1] : "";
+    let base = arch ? value.slice(0, -arch.length).trim() : value;
+
+    if (base.length > 28) {
+        const words = base.split(/\s+/).filter(Boolean);
+        if (words.length > 3) {
+            base = words.slice(0, 3).join(" ");
+        }
+    }
+
+    return [base, arch].filter(Boolean).join(" ").trim() || value;
+}
+
 function formatMemorySummary(usedMb, totalMb) {
     const usedGb = usedMb / 1024;
     const totalGb = totalMb / 1024;
@@ -607,7 +686,7 @@ async function loadStatus() {
 
     lastStatusSignature = statusSignature;
     syncBrandSummary(window.location.hostname, logFiles);
-    document.getElementById("resource-system-label").textContent = data.os_label || "Unknown OS";
+    document.getElementById("resource-system-label").textContent = formatSystemLabel(data.os_label);
     document.getElementById("resource-uptime").textContent = formatUptime(data.uptime_seconds);
     document.getElementById("website-count").textContent = websites;
     document.getElementById("ftp-count").textContent = ftpCount;
@@ -2015,6 +2094,8 @@ websiteFormEl.addEventListener("submit", async (event) => {
 
     websiteSubmitButtonEl.disabled = true;
     websiteSubmitButtonEl.textContent = "Saving...";
+    websiteDomainInputEl.value = finalizeWebsiteDomainValue(websiteDomainInputEl.value);
+    syncWebsiteDomainInputUI();
 
     const payload = {
         domain: websiteDomainInputEl.value,
@@ -2764,7 +2845,23 @@ document.addEventListener("keydown", (event) => {
 });
 
 websiteDomainInputEl.addEventListener("input", () => {
-    websitePathInputEl.value = buildWebsitePathPreview(websiteDomainInputEl.value);
+    syncWebsiteDomainInputUI();
+});
+
+websiteDomainInputEl.addEventListener("keydown", (event) => {
+    if (event.key === " ") {
+        event.preventDefault();
+        commitWebsiteDomainDefaultSuffix();
+        return;
+    }
+
+    if (event.key === "Enter" && commitWebsiteDomainDefaultSuffix()) {
+        event.preventDefault();
+    }
+});
+
+websiteDomainInputEl.addEventListener("blur", () => {
+    syncWebsiteDomainInputUI({ commit: true });
 });
 
 websitePathInputEl.addEventListener("input", () => {
@@ -2832,6 +2929,7 @@ async function openWebsiteModal() {
     websiteFormEl.reset();
     syncWebsitePathHint();
     websitePathInputEl.value = "";
+    syncWebsiteDomainInputUI();
     websiteModalEl.hidden = false;
     document.body.classList.add("modal-open");
     setWebsitePHPVersionLoadingState();
