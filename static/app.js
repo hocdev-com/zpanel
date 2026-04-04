@@ -325,7 +325,7 @@ const viewConfig = {
     },
     settings: {
         title: "Settings",
-        copy: "Set the frontend alias, timezone, default site folder, and open the popup for editing the app list.",
+        copy: "Configure panel identity, locale, storage defaults, and the App Store list from one workspace.",
     },
     websites: {
         title: "Websites",
@@ -1437,53 +1437,127 @@ function applyPanelSettingsState(payload = {}) {
 
 function renderPanelSettings(payload) {
     applyPanelSettingsState(payload);
+    const alias = panelSettingsState.alias || DEFAULT_PANEL_ALIAS;
+    const timezone = panelSettingsState.timezone || DEFAULT_PANEL_TIMEZONE;
+    const language = LANGUAGE_OPTIONS.find((option) => option.value === panelSettingsState.language)?.label || "English";
+    const defaultSiteFolder = panelSettingsState.default_site_folder || DEFAULT_SITE_FOLDER;
+    const resolvedSiteRoot = panelSettingsState.resolved_site_root || "-";
+    const serverTime = panelSettingsState.server_time || "-";
     panelSettingsFormEl.innerHTML = `
-        <div class="panel-settings-grid">
-            <label class="panel-settings-field">
-                <span>Alias</span>
-                <input
-                    type="text"
-                    name="alias"
-                    value="${escapeHTML(panelSettingsState.alias)}"
-                    placeholder="${DEFAULT_PANEL_ALIAS}"
-                />
-                <small>Frontend title shown in the browser tab and sidebar.</small>
-            </label>
-            <label class="panel-settings-field">
-                <span>Server time</span>
-                <select name="timezone">
-                    ${timezoneOptions(panelSettingsState.timezone)}
-                </select>
-                <small>Current time: ${escapeHTML(panelSettingsState.server_time || "-")} (${escapeHTML(formatTimezoneOffset(panelSettingsState.timezone))})</small>
-            </label>
-            <label class="panel-settings-field">
-                <span>Language</span>
-                <select name="language">
-                    ${languageOptions(panelSettingsState.language)}
-                </select>
-                <small>Stored now for future multilingual support.</small>
-            </label>
-            <label class="panel-settings-field">
-                <span>Default site folder</span>
-                <div class="panel-settings-folder-input">
-                    <input
-                        type="text"
-                        name="default_site_folder"
-                        value="${escapeHTML(panelSettingsState.default_site_folder)}"
-                        placeholder="${DEFAULT_SITE_FOLDER}"
-                    />
-                    <button type="button" class="folder-picker-button" id="pick-default-site-folder" aria-label="Choose folder" title="Choose folder">
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"></path>
-                        </svg>
-                    </button>
-                </div>
-                <small>Resolved root: ${escapeHTML(panelSettingsState.resolved_site_root || "-")}</small>
-            </label>
-        </div>
-        <div class="panel-settings-actions">
-            <button type="button" class="ghost" id="open-app-list-settings">Edit App List</button>
-            <button type="submit">Save Settings</button>
+        <div class="settings-workspace">
+            <aside class="settings-sidebar" aria-label="Settings shortcuts">
+                <section class="settings-sidebar-card">
+                    <span class="eyebrow">Quick Navigation</span>
+                    <nav class="settings-nav">
+                        <a href="#settings-identity">Panel identity</a>
+                        <a href="#settings-locale">Region and language</a>
+                        <a href="#settings-storage">Website storage</a>
+                    </nav>
+                    <button type="button" class="settings-nav-action" id="open-app-list-settings">Edit App List</button>
+                </section>
+                <section class="settings-sidebar-card settings-sidebar-card-muted">
+                    <span class="eyebrow">Current State</span>
+                    <dl class="settings-facts">
+                        <div>
+                            <dt>Server clock</dt>
+                            <dd>${escapeHTML(serverTime)}</dd>
+                        </div>
+                        <div>
+                            <dt>Language</dt>
+                            <dd>${escapeHTML(language)}</dd>
+                        </div>
+                        <div>
+                            <dt>Resolved root</dt>
+                            <dd>${escapeHTML(resolvedSiteRoot)}</dd>
+                        </div>
+                    </dl>
+                </section>
+                <button type="submit" class="settings-side-save">Save Changes</button>
+            </aside>
+
+            <div class="settings-main">
+                <section class="settings-section" id="settings-identity">
+                    <div class="settings-section-head">
+                        <div>
+                            <span class="eyebrow">Identity</span>
+                            <h4>Panel identity</h4>
+                            <p>Set the label users see first when this panel is opened.</p>
+                        </div>
+                    </div>
+                    <div class="panel-settings-grid">
+                        <label class="panel-settings-field">
+                            <span class="panel-settings-label">Alias</span>
+                            <input
+                                type="text"
+                                name="alias"
+                                value="${escapeHTML(panelSettingsState.alias)}"
+                                placeholder="${DEFAULT_PANEL_ALIAS}"
+                            />
+                            <small>Shown in the browser tab, document title, and sidebar summary.</small>
+                        </label>
+                        <div class="panel-settings-field panel-settings-field-preview">
+                            <span class="panel-settings-label">Live preview</span>
+                            <strong>${escapeHTML(alias)}</strong>
+                            <small>Use a short name that still reads well in a browser tab.</small>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="settings-section" id="settings-locale">
+                    <div class="settings-section-head">
+                        <div>
+                            <span class="eyebrow">Region</span>
+                            <h4>Region and language</h4>
+                            <p>Keep timestamps and interface defaults predictable across the panel.</p>
+                        </div>
+                    </div>
+                    <div class="panel-settings-grid">
+                        <label class="panel-settings-field">
+                            <span class="panel-settings-label">Server time zone</span>
+                            <select name="timezone">
+                                ${timezoneOptions(panelSettingsState.timezone)}
+                            </select>
+                            <small>Current time: ${escapeHTML(serverTime)} (${escapeHTML(formatTimezoneOffset(timezone))})</small>
+                        </label>
+                        <label class="panel-settings-field">
+                            <span class="panel-settings-label">Language</span>
+                            <select name="language">
+                                ${languageOptions(panelSettingsState.language)}
+                            </select>
+                            <small>Stored now so future multilingual UI can inherit the right default.</small>
+                        </label>
+                    </div>
+                </section>
+
+                <section class="settings-section" id="settings-storage">
+                    <div class="settings-section-head">
+                        <div>
+                            <span class="eyebrow">Storage</span>
+                            <h4>Website storage</h4>
+                            <p>Choose the root folder that new websites inherit when they are created.</p>
+                        </div>
+                    </div>
+                    <div class="panel-settings-grid">
+                        <label class="panel-settings-field panel-settings-field-wide">
+                            <span class="panel-settings-label">Default site folder</span>
+                            <div class="panel-settings-folder-input">
+                                <input
+                                    type="text"
+                                    name="default_site_folder"
+                                    value="${escapeHTML(panelSettingsState.default_site_folder)}"
+                                    placeholder="${DEFAULT_SITE_FOLDER}"
+                                />
+                                <button type="button" class="folder-picker-button" id="pick-default-site-folder" aria-label="Choose folder" title="Choose folder">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <small data-folder-help>Resolved root: ${escapeHTML(resolvedSiteRoot)}</small>
+                        </label>
+                    </div>
+                </section>
+            </div>
         </div>
     `;
 }
@@ -2545,7 +2619,7 @@ panelSettingsFormEl.addEventListener("submit", async (event) => {
         const nextSubmitButton = panelSettingsFormEl.querySelector("button[type='submit']");
         if (nextSubmitButton) {
             nextSubmitButton.disabled = false;
-            nextSubmitButton.textContent = "Save Settings";
+            nextSubmitButton.textContent = "Save Changes";
         }
     }
 });
@@ -2794,7 +2868,7 @@ folderBrowserSelectEl.addEventListener("click", () => {
     if (input) {
         input.value = folderBrowserState.display_path || folderBrowserState.current_path;
     }
-    const helpText = input?.closest(".panel-settings-field")?.querySelector("small");
+    const helpText = input?.closest(".panel-settings-field")?.querySelector("[data-folder-help]");
     if (helpText) {
         helpText.textContent = `Resolved root: ${folderBrowserState.current_path || "-"}`;
     }
