@@ -632,6 +632,13 @@ type runtimeDependencyState struct {
 	Message             string
 }
 
+type runtimeCompatibilitySummary struct {
+	ApacheVersions     []string
+	PHPVersions        []string
+	MySQLVersions      []string
+	PHPMyAdminVersions []string
+}
+
 func phpMyAdminSupportsPHPVersion(version string) bool {
 	parts := strings.Split(strings.TrimSpace(version), ".")
 	if len(parts) < 2 {
@@ -654,6 +661,89 @@ func phpMyAdminSupportsPHPVersion(version string) bool {
 		return minor < 4
 	}
 	return false
+}
+
+func phpMyAdminSupportsPHPVersionForRelease(phpMyAdminVersion string, phpVersion string) bool {
+	phpMyAdminVersion = strings.TrimSpace(phpMyAdminVersion)
+	if compareVersionStrings(phpMyAdminVersion, "6.0.0") >= 0 {
+		return compareVersionStrings(strings.TrimSpace(phpVersion), "8.1.0") >= 0
+	}
+	return phpMyAdminSupportsPHPVersion(phpVersion)
+}
+
+func phpMyAdminSupportsMySQLVersion(phpMyAdminVersion string, mysqlVersion string) bool {
+	phpMyAdminVersion = strings.TrimSpace(phpMyAdminVersion)
+	mysqlVersion = strings.TrimSpace(mysqlVersion)
+	if phpMyAdminVersion == "" || mysqlVersion == "" {
+		return false
+	}
+	if compareVersionStrings(phpMyAdminVersion, "6.0.0") >= 0 {
+		return compareVersionStrings(mysqlVersion, "8.0.0") >= 0
+	}
+	return compareVersionStrings(mysqlVersion, "8.0.0") >= 0
+}
+
+func runtimeVersionsMatching(releases []runtimeRelease, match func(string) bool) []string {
+	versions := make([]string, 0, len(releases))
+	for _, release := range releases {
+		version := strings.TrimSpace(release.Version)
+		if version == "" {
+			continue
+		}
+		if match != nil && !match(version) {
+			continue
+		}
+		versions = append(versions, version)
+	}
+	return versions
+}
+
+func uniqueSortedVersionsDesc(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	versions := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		versions = append(versions, value)
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		return compareVersionStrings(versions[i], versions[j]) > 0
+	})
+	return versions
+}
+
+func formatVersionList(versions []string) string {
+	versions = uniqueSortedVersionsDesc(versions)
+	if len(versions) == 0 {
+		return ""
+	}
+	return strings.Join(versions, ", ")
+}
+
+func formatCompatibilityMessage(summary runtimeCompatibilitySummary) string {
+	parts := make([]string, 0, 4)
+	if versions := formatVersionList(summary.ApacheVersions); versions != "" {
+		parts = append(parts, "Apache "+versions)
+	}
+	if versions := formatVersionList(summary.PHPVersions); versions != "" {
+		parts = append(parts, "PHP "+versions)
+	}
+	if versions := formatVersionList(summary.MySQLVersions); versions != "" {
+		parts = append(parts, "MySQL "+versions)
+	}
+	if versions := formatVersionList(summary.PHPMyAdminVersions); versions != "" {
+		parts = append(parts, "phpMyAdmin "+versions)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Compatible with " + strings.Join(parts, "; ") + "."
 }
 
 func containsString(values []string, target string) bool {
@@ -693,37 +783,87 @@ func compareVersionStrings(left string, right string) int {
 	return 0
 }
 
-func (m *windowsRuntimeManager) phpMyAdminCompatiblePHPVersion(installed []string) string {
-	current := strings.TrimSpace(m.currentPHPVersion())
-	if current != "" && phpMyAdminSupportsPHPVersion(current) && fileExists(m.phpCgiExe(current)) {
-		return current
+func (m *windowsRuntimeManager) compatibilitySummaryForApp(appID string, version string, apacheReleases []runtimeRelease, phpReleases []runtimeRelease, mysqlReleases []runtimeRelease, phpMyAdminReleases []runtimeRelease) runtimeCompatibilitySummary {
+	version = strings.TrimSpace(version)
+	switch strings.ToLower(strings.TrimSpace(appID)) {
+	case "mysql":
+		return runtimeCompatibilitySummary{
+			ApacheVersions:     runtimeVersionsMatching(apacheReleases, nil),
+			PHPVersions:        runtimeVersionsMatching(phpReleases, nil),
+			PHPMyAdminVersions: runtimeVersionsMatching(phpMyAdminReleases, func(candidate string) bool { return phpMyAdminSupportsMySQLVersion(candidate, version) }),
+		}
+	case "phpmyadmin":
+		return runtimeCompatibilitySummary{
+			ApacheVersions: runtimeVersionsMatching(apacheReleases, nil),
+			PHPVersions: runtimeVersionsMatching(phpReleases, func(candidate string) bool {
+				return phpMyAdminSupportsPHPVersionForRelease(version, candidate)
+			}),
+			MySQLVersions: runtimeVersionsMatching(mysqlReleases, func(candidate string) bool {
+				return phpMyAdminSupportsMySQLVersion(version, candidate)
+			}),
+		}
+	case "php":
+		return runtimeCompatibilitySummary{
+			ApacheVersions: runtimeVersionsMatching(apacheReleases, nil),
+			MySQLVersions:  runtimeVersionsMatching(mysqlReleases, nil),
+			PHPMyAdminVersions: runtimeVersionsMatching(phpMyAdminReleases, func(candidate string) bool {
+				return phpMyAdminSupportsPHPVersionForRelease(candidate, version)
+			}),
+		}
+	case "apache":
+		return runtimeCompatibilitySummary{
+			PHPVersions:        runtimeVersionsMatching(phpReleases, nil),
+			MySQLVersions:      runtimeVersionsMatching(mysqlReleases, nil),
+			PHPMyAdminVersions: runtimeVersionsMatching(phpMyAdminReleases, nil),
+		}
+	default:
+		return runtimeCompatibilitySummary{}
 	}
+}
 
+func (m *windowsRuntimeManager) compatibilityMessageForApp(appID string, version string, apacheReleases []runtimeRelease, phpReleases []runtimeRelease, mysqlReleases []runtimeRelease, phpMyAdminReleases []runtimeRelease) string {
+	return formatCompatibilityMessage(m.compatibilitySummaryForApp(appID, version, apacheReleases, phpReleases, mysqlReleases, phpMyAdminReleases))
+}
+
+func (m *windowsRuntimeManager) phpMyAdminCompatiblePHPVersions(installed []string, phpMyAdminVersion string) []string {
 	compatible := make([]string, 0, len(installed))
+	current := strings.TrimSpace(m.currentPHPVersion())
+	if current != "" && phpMyAdminSupportsPHPVersionForRelease(phpMyAdminVersion, current) && fileExists(m.phpCgiExe(current)) {
+		compatible = append(compatible, current)
+	}
 	for _, version := range installed {
 		version = strings.TrimSpace(version)
-		if version == "" || !phpMyAdminSupportsPHPVersion(version) || !fileExists(m.phpCgiExe(version)) {
+		if version == "" || !phpMyAdminSupportsPHPVersionForRelease(phpMyAdminVersion, version) || !fileExists(m.phpCgiExe(version)) {
 			continue
 		}
 		compatible = append(compatible, version)
 	}
-	sort.Slice(compatible, func(i, j int) bool {
-		return compareVersionStrings(compatible[i], compatible[j]) > 0
-	})
+	return uniqueSortedVersionsDesc(compatible)
+}
+
+func (m *windowsRuntimeManager) phpMyAdminCompatiblePHPVersion(installed []string, phpMyAdminVersion string) string {
+	compatible := m.phpMyAdminCompatiblePHPVersions(installed, phpMyAdminVersion)
 	if len(compatible) == 0 {
 		return ""
 	}
 	return compatible[0]
 }
 
-func (m *windowsRuntimeManager) phpMyAdminDependencyState(apacheInstalled bool, apacheRunning bool, mysqlInstalled bool, mysqlRunning bool, installedPHPs []string, runningPHPs []string) runtimeDependencyState {
+func (m *windowsRuntimeManager) phpMyAdminDependencyState(apacheInstalled bool, apacheRunning bool, apacheVersion string, mysqlInstalled bool, mysqlRunning bool, mysqlVersion string, installedPHPs []string, runningPHPs []string, phpMyAdminVersion string, apacheReleases []runtimeRelease, mysqlReleases []runtimeRelease, phpReleases []runtimeRelease) runtimeDependencyState {
+	compatibility := m.compatibilitySummaryForApp("phpmyadmin", phpMyAdminVersion, apacheReleases, phpReleases, mysqlReleases, nil)
 	state := runtimeDependencyState{
-		Dependencies: []string{"Apache", "MySQL", "PHP 7.2-8.3"},
+		Dependencies: []string{
+			"Apache " + formatVersionList(compatibility.ApacheVersions),
+			"MySQL " + formatVersionList(compatibility.MySQLVersions),
+			"PHP " + formatVersionList(compatibility.PHPVersions),
+		},
 	}
 
 	switch {
 	case !apacheInstalled:
 		state.MissingDependencies = append(state.MissingDependencies, "Install Apache")
+	case apacheVersion != "" && len(compatibility.ApacheVersions) > 0 && !containsString(compatibility.ApacheVersions, apacheVersion):
+		state.MissingDependencies = append(state.MissingDependencies, "Switch Apache to "+formatVersionList(compatibility.ApacheVersions))
 	case !apacheRunning:
 		state.MissingDependencies = append(state.MissingDependencies, "Start Apache")
 	}
@@ -731,24 +871,39 @@ func (m *windowsRuntimeManager) phpMyAdminDependencyState(apacheInstalled bool, 
 	switch {
 	case !mysqlInstalled:
 		state.MissingDependencies = append(state.MissingDependencies, "Install MySQL")
+	case mysqlVersion != "" && len(compatibility.MySQLVersions) > 0 && !containsString(compatibility.MySQLVersions, mysqlVersion):
+		state.MissingDependencies = append(state.MissingDependencies, "Switch MySQL to "+formatVersionList(compatibility.MySQLVersions))
 	case !mysqlRunning:
 		state.MissingDependencies = append(state.MissingDependencies, "Start MySQL")
 	}
 
-	phpVersion := m.phpMyAdminCompatiblePHPVersion(installedPHPs)
+	compatibleInstalledPHPs := m.phpMyAdminCompatiblePHPVersions(installedPHPs, phpMyAdminVersion)
 	switch {
-	case phpVersion == "":
-		state.MissingDependencies = append(state.MissingDependencies, "Install a compatible PHP runtime (7.2-8.3)")
-	case !containsString(runningPHPs, phpVersion):
-		state.MissingDependencies = append(state.MissingDependencies, "Start PHP "+phpVersion)
+	case len(compatibleInstalledPHPs) == 0:
+		state.MissingDependencies = append(state.MissingDependencies, "Install or switch PHP to "+formatVersionList(compatibility.PHPVersions))
+	default:
+		runningCompatiblePHPs := make([]string, 0, len(runningPHPs))
+		for _, version := range runningPHPs {
+			if containsString(compatibleInstalledPHPs, version) {
+				runningCompatiblePHPs = append(runningCompatiblePHPs, version)
+			}
+		}
+		if len(runningCompatiblePHPs) == 0 {
+			state.MissingDependencies = append(state.MissingDependencies, "Start PHP "+compatibleInstalledPHPs[0])
+		}
 	}
 
+	compatibilityMessage := formatCompatibilityMessage(compatibility)
 	if len(state.MissingDependencies) == 0 {
-		state.Message = "Requires Apache, MySQL, and a compatible PHP runtime (7.2-8.3)."
+		state.Message = compatibilityMessage
 		return state
 	}
 
-	state.Message = "Requires Apache and MySQL running, plus a compatible PHP runtime (7.2-8.3). Missing: " + strings.Join(state.MissingDependencies, "; ") + "."
+	if compatibilityMessage == "" {
+		state.Message = "Requires a compatible Apache, MySQL, and PHP stack. Missing: " + strings.Join(state.MissingDependencies, "; ") + "."
+		return state
+	}
+	state.Message = "Requires a compatible Apache, MySQL, and PHP stack. Missing: " + strings.Join(state.MissingDependencies, "; ") + ". " + compatibilityMessage
 	return state
 }
 
@@ -758,6 +913,15 @@ func (m *windowsRuntimeManager) apacheConfigHasPHPMyAdminAlias() bool {
 		return false
 	}
 	return strings.Contains(string(content), "# zPanel Local Tools BEGIN")
+}
+
+func (m *windowsRuntimeManager) apacheConfigHasPHPMyAdminPort(port int) bool {
+	content, err := os.ReadFile(m.httpdConfPath())
+	if err != nil {
+		return false
+	}
+	needle := `SetHandler "proxy:fcgi://127.0.0.1:` + strconv.Itoa(port) + `//./"`
+	return strings.Contains(string(content), "# zPanel Local Tools BEGIN") && strings.Contains(string(content), needle)
 }
 
 func (m *windowsRuntimeManager) listApps() []runtimeApp {
@@ -808,6 +972,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	apps := []runtimeApp{
 		newRuntimeApp("apache", "Apache", apacheVersion, availableVersions(apacheReleases), "Portable web server stored in data/runtime.", apacheInstallPath, apacheInstalled, apacheRunning, strconv.Itoa(apachePort), formatPortURL("127.0.0.1", apachePort, "/"), releaseURLs(apacheReleases), apacheInstalled && !apacheRunning, apacheInstalled && apacheRunning, apacheRunning, apacheInstalled),
 	}
+	apps[0].CompatibilityMessage = m.compatibilityMessageForApp("apache", apacheVersion, apacheReleases, phpReleases, mysqlReleases, phpMyAdminReleases)
 
 	// Detect all installed PHP versions
 	installedPHPs := m.getInstalledPHPVersions()
@@ -830,11 +995,14 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 	phpApp := newRuntimeApp("php", "PHP", mainPHPVersion, availableVersions(phpReleases), "Portable PHP runtime. Multiple versions supported per website.", phpInstallPath, phpInstalled, phpRunning, "9000+", phpURL, releaseURLs(phpReleases), phpInstalled && !phpRunning, phpRunning, apacheRunning, phpInstalled)
 	phpApp.InstalledVersions = installedPHPs
 	phpApp.RunningVersions = runningPHPs
+	phpApp.CompatibilityMessage = m.compatibilityMessageForApp("php", mainPHPVersion, apacheReleases, phpReleases, mysqlReleases, phpMyAdminReleases)
 	apps = append(apps, phpApp)
 
-	apps = append(apps, newRuntimeApp("mysql", "MySQL", mysqlVersion, availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled))
+	mysqlApp := newRuntimeApp("mysql", "MySQL", mysqlVersion, availableVersions(mysqlReleases), "Portable MySQL server stored in data/runtime.", mysqlInstallPath, mysqlInstalled, mysqlRunning, "3307", "", releaseURLs(mysqlReleases), mysqlInstalled && !mysqlRunning, mysqlInstalled && mysqlRunning, false, mysqlInstalled)
+	mysqlApp.CompatibilityMessage = m.compatibilityMessageForApp("mysql", mysqlVersion, apacheReleases, phpReleases, mysqlReleases, phpMyAdminReleases)
+	apps = append(apps, mysqlApp)
 
-	phpMyAdminDeps := m.phpMyAdminDependencyState(apacheInstalled, apacheRunning, mysqlInstalled, mysqlRunning, installedPHPs, runningPHPs)
+	phpMyAdminDeps := m.phpMyAdminDependencyState(apacheInstalled, apacheRunning, apacheVersion, mysqlInstalled, mysqlRunning, mysqlVersion, installedPHPs, runningPHPs, phpMyAdminVersion, apacheReleases, mysqlReleases, phpReleases)
 	phpMyAdminReady := phpMyAdminInstalled &&
 		len(phpMyAdminDeps.MissingDependencies) == 0 &&
 		m.apacheConfigHasPHPMyAdminAlias() &&
@@ -852,9 +1020,10 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 		phpMyAdminApp.Dependencies = append([]string(nil), phpMyAdminDeps.Dependencies...)
 		phpMyAdminApp.MissingDependencies = append([]string(nil), phpMyAdminDeps.MissingDependencies...)
 		phpMyAdminApp.DependencyMessage = phpMyAdminDeps.Message
+		phpMyAdminApp.CompatibilityMessage = m.compatibilityMessageForApp("phpmyadmin", phpMyAdminVersion, apacheReleases, phpReleases, mysqlReleases, phpMyAdminReleases)
 		if phpMyAdminInstalled && len(phpMyAdminDeps.MissingDependencies) > 0 {
 			phpMyAdminApp.Status = "stopped"
-			phpMyAdminApp.StatusLabel = "Dependencies required"
+			phpMyAdminApp.StatusLabel = "Required"
 		}
 		apps = append(apps, phpMyAdminApp)
 	}
@@ -899,6 +1068,21 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 	if err := m.normalizeRuntimeLayout(); err != nil {
 		return err
 	}
+	if plan.needApache {
+		if err := validateSingleVersionInstall("Apache", m.installedApacheVersionResolved(), selection.Apache.Version, fileExists(m.apacheExe()), apacheListeningOnPort(m.configuredHTTPPortOrDefault())); err != nil {
+			return err
+		}
+	}
+	if plan.needMySQL {
+		if err := validateSingleVersionInstall("MySQL", m.installedMySQLVersionResolved(), selection.MySQL.Version, fileExists(m.mysqlExe()), testTCPPort("127.0.0.1", 3307, 120*time.Millisecond)); err != nil {
+			return err
+		}
+	}
+	if plan.needPHPMyAdmin {
+		if err := validateSingleVersionInstall("phpMyAdmin", m.installedPHPMyAdminVersionResolved(), selection.PHPMyAdmin.Version, fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php")), false); err != nil {
+			return err
+		}
+	}
 	dirs := []string{paths.runtimeRoot, paths.downloadsDir}
 	if plan.needMySQL {
 		dirs = append(dirs, paths.mysqlDataDir, paths.mysqlTempDir)
@@ -908,22 +1092,6 @@ func (m *windowsRuntimeManager) ensureProvisioned(plan runtimeInstallPlan, selec
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-
-	if plan.needApache && shouldReplaceRuntime(m.installedVersionFromMetadata("apache"), selection.Apache.Version, fileExists(m.apacheExe())) {
-		if err := m.uninstallApache(); err != nil {
-			return err
-		}
-	}
-	if plan.needMySQL && shouldReplaceRuntime(m.installedVersionFromMetadata("mysql"), selection.MySQL.Version, fileExists(m.mysqlExe())) {
-		if err := m.uninstallMySQL(); err != nil {
-			return err
-		}
-	}
-	if plan.needPHPMyAdmin && shouldReplaceRuntime(m.installedVersionFromMetadata("phpmyadmin"), selection.PHPMyAdmin.Version, fileExists(filepath.Join(m.phpMyAdminRoot(), "index.php"))) {
-		if err := m.uninstallPHPMyAdmin(); err != nil {
 			return err
 		}
 	}
@@ -1047,6 +1215,21 @@ func shouldReplaceRuntime(currentVersion string, selectedVersion string, exists 
 		return false
 	}
 	return currentVersion != selectedVersion
+}
+
+func validateSingleVersionInstall(appLabel string, installedVersion string, selectedVersion string, installed bool, running bool) error {
+	if !installed {
+		return nil
+	}
+	installedVersion = strings.TrimSpace(installedVersion)
+	selectedVersion = strings.TrimSpace(selectedVersion)
+	if selectedVersion == "" || installedVersion == "" || installedVersion == selectedVersion {
+		return nil
+	}
+	if running {
+		return fmt.Errorf("%s %s is running. Uninstall it before installing %s %s", appLabel, installedVersion, appLabel, selectedVersion)
+	}
+	return fmt.Errorf("%s %s is already installed. Uninstall it before installing %s %s", appLabel, installedVersion, appLabel, selectedVersion)
 }
 
 func pickRelease(releases []runtimeRelease, requestedVersion string) (runtimeRelease, error) {
@@ -1414,7 +1597,7 @@ func (m *windowsRuntimeManager) phpMyAdminApacheBlock(httpPort int) string {
 		return ""
 	}
 
-	phpVersion := m.phpMyAdminCompatiblePHPVersion(m.getInstalledPHPVersions())
+	phpVersion := m.phpMyAdminCompatiblePHPVersion(m.getInstalledPHPVersions(), m.installedPHPMyAdminVersionResolved())
 	if phpVersion == "" {
 		return ""
 	}
@@ -1449,9 +1632,27 @@ func (m *windowsRuntimeManager) startPHPMyAdmin() error {
 		return errors.New("phpmyadmin is not installed yet. Use Install first.")
 	}
 
+	apacheReleases := appStoreEffectiveReleases(m.projectRoot, "apache")
+	mysqlReleases := appStoreEffectiveReleases(m.projectRoot, "mysql")
+	phpReleases := appStoreEffectiveReleases(m.projectRoot, "php")
+	phpMyAdminVersion := m.installedPHPMyAdminVersionResolved()
 	installedPHPs := m.getInstalledPHPVersions()
 	runningPHPs := m.runningPHPVersions(installedPHPs)
-	dependencies := m.phpMyAdminDependencyState(fileExists(m.apacheExe()), apacheListeningOnPort(m.configuredHTTPPortOrDefault()), fileExists(m.mysqlExe()), testTCPPort("127.0.0.1", 3307, 120*time.Millisecond), installedPHPs, runningPHPs)
+	phpVersion := m.phpMyAdminCompatiblePHPVersion(installedPHPs, phpMyAdminVersion)
+	dependencies := m.phpMyAdminDependencyState(
+		fileExists(m.apacheExe()),
+		apacheListeningOnPort(m.configuredHTTPPortOrDefault()),
+		m.installedApacheVersionResolved(),
+		fileExists(m.mysqlExe()),
+		testTCPPort("127.0.0.1", 3307, 120*time.Millisecond),
+		m.installedMySQLVersionResolved(),
+		installedPHPs,
+		runningPHPs,
+		phpMyAdminVersion,
+		apacheReleases,
+		mysqlReleases,
+		phpReleases,
+	)
 	if len(dependencies.MissingDependencies) > 0 {
 		return &runtimeDependencyError{
 			AppID:               "phpmyadmin",
@@ -1466,8 +1667,18 @@ func (m *windowsRuntimeManager) startPHPMyAdmin() error {
 	if err := m.ensurePHPMyAdminPublicPath(); err != nil {
 		return err
 	}
+	if phpVersion != "" {
+		if err := m.startPHPFastCGI(phpVersion); err != nil {
+			return err
+		}
+	}
 
 	httpPort := m.configuredHTTPPortOrDefault()
+	if apacheListeningOnPort(httpPort) &&
+		m.apacheConfigHasPHPMyAdminPort(phpFastCGIPort(phpVersion)) &&
+		fileExists(filepath.Join(m.phpMyAdminPublicPath(), "index.php")) {
+		return nil
+	}
 	if err := m.configureApache(m.currentPHPVersion(), httpPort); err != nil {
 		return err
 	}

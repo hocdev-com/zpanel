@@ -685,6 +685,9 @@ func TestListAppsShowsPHPMyAdminDependencies(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(phpMyAdminRoot, "index.php"), []byte("<?php"), 0o644); err != nil {
 		t.Fatalf("write phpmyadmin index: %v", err)
 	}
+	if err := manager.saveInstalledVersionsMetadata(installedRuntimeVersions{"phpmyadmin": "5.2.3"}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
 
 	apps := manager.listApps()
 
@@ -709,8 +712,68 @@ func TestListAppsShowsPHPMyAdminDependencies(t *testing.T) {
 	if len(phpMyAdminApp.MissingDependencies) == 0 {
 		t.Fatal("expected phpmyadmin to report missing dependencies")
 	}
-	if !strings.Contains(phpMyAdminApp.DependencyMessage, "Requires Apache and MySQL running") {
+	if !strings.Contains(phpMyAdminApp.DependencyMessage, "Requires a compatible Apache, MySQL, and PHP stack") {
 		t.Fatalf("unexpected dependency message: %s", phpMyAdminApp.DependencyMessage)
+	}
+	if !strings.Contains(phpMyAdminApp.DependencyMessage, "PHP 8.3.30") {
+		t.Fatalf("expected phpmyadmin dependency message to include compatible php versions, got: %s", phpMyAdminApp.DependencyMessage)
+	}
+}
+
+func TestListAppsShowsMySQLCompatibilityMatrix(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	mysqlHome := filepath.Join(manager.paths().mysqlExtractDir, "mysql-8.4.8-winx64")
+	if err := os.MkdirAll(filepath.Join(mysqlHome, "bin"), 0o755); err != nil {
+		t.Fatalf("mkdir mysql dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mysqlHome, "bin", "mysqld.exe"), []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write mysqld.exe: %v", err)
+	}
+	if err := manager.saveInstalledVersionsMetadata(installedRuntimeVersions{"mysql": "8.4.8"}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	settings := appStoreSettingsFile{
+		Downloads: map[string]map[string]string{
+			"database": {
+				"5.2.3": "https://example.com/phpMyAdmin-5.2.3-all-languages.zip",
+				"6.0":   "https://example.com/phpMyAdmin-6.0-all-languages.zip",
+			},
+		},
+		Titles: map[string]map[string]string{
+			"database": {
+				"5.2.3": "phpMyAdmin",
+				"6.0":   "phpMyAdmin",
+			},
+		},
+	}
+	if err := saveAppStoreSettingsToDB(root, settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	apps := manager.listApps()
+
+	var mysqlApp runtimeApp
+	found := false
+	for _, app := range apps {
+		if app.ID == "mysql" {
+			mysqlApp = app
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("mysql app not found")
+	}
+	if !strings.Contains(mysqlApp.CompatibilityMessage, "Apache 2.4.66, 2.4.65") {
+		t.Fatalf("expected mysql compatibility to include apache versions, got: %s", mysqlApp.CompatibilityMessage)
+	}
+	if !strings.Contains(mysqlApp.CompatibilityMessage, "PHP 8.4.19, 8.3.30") {
+		t.Fatalf("expected mysql compatibility to include php versions, got: %s", mysqlApp.CompatibilityMessage)
+	}
+	if !strings.Contains(mysqlApp.CompatibilityMessage, "phpMyAdmin 6.0, 5.2.3") {
+		t.Fatalf("expected mysql compatibility to include phpmyadmin versions, got: %s", mysqlApp.CompatibilityMessage)
 	}
 }
 
@@ -779,6 +842,9 @@ func TestConfigureApacheAddsPHPMyAdminLocalToolsVHost(t *testing.T) {
 	if !fileExists(manager.phpMyAdminConfigPath()) {
 		t.Fatal("expected phpmyadmin config.inc.php to be created")
 	}
+	if !manager.apacheConfigHasPHPMyAdminPort(phpFastCGIPort("8.3.30")) {
+		t.Fatal("expected phpmyadmin port helper to detect configured fastcgi port")
+	}
 }
 
 func TestStartMySQLRejectsDifferentInstalledVersion(t *testing.T) {
@@ -826,5 +892,28 @@ func TestStartPHPMyAdminRejectsDifferentInstalledVersion(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Installed version is 5.2.3") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSingleVersionInstallRequiresUninstallFirst(t *testing.T) {
+	if err := validateSingleVersionInstall("Apache", "2.4.66", "2.4.65", true, false); err == nil {
+		t.Fatal("expected install conflict error")
+	} else if !strings.Contains(err.Error(), "Apache 2.4.66 is already installed. Uninstall it before installing Apache 2.4.65") {
+		t.Fatalf("unexpected stopped conflict error: %v", err)
+	}
+
+	if err := validateSingleVersionInstall("MySQL", "8.4.8", "8.0.43", true, true); err == nil {
+		t.Fatal("expected running install conflict error")
+	} else if !strings.Contains(err.Error(), "MySQL 8.4.8 is running. Uninstall it before installing MySQL 8.0.43") {
+		t.Fatalf("unexpected running conflict error: %v", err)
+	}
+
+	if err := validateSingleVersionInstall("Apache", "2.4.66", "2.4.66", true, true); err != nil {
+		t.Fatalf("expected same-version install to be allowed, got: %v", err)
+	}
+	if err := validateSingleVersionInstall("phpMyAdmin", "5.2.3", "6.0", true, false); err == nil {
+		t.Fatal("expected phpmyadmin install conflict error")
+	} else if !strings.Contains(err.Error(), "phpMyAdmin 5.2.3 is already installed. Uninstall it before installing phpMyAdmin 6.0") {
+		t.Fatalf("unexpected phpmyadmin conflict error: %v", err)
 	}
 }

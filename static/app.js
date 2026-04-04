@@ -879,8 +879,9 @@ function appStoreRow(app) {
 
     const statusClass = app.status === "running" ? "running" : app.status === "stopped" ? "stopped" : "not-installed";
     const statusLabel = app.status_label || "Not installed";
-    const dependencyNote = app.installed && app.dependency_message
-        ? `<div class="app-dependency-note">${escapeHTML(app.dependency_message)}</div>`
+    const stackNote = app.dependency_message || app.compatibility_message || "";
+    const dependencyNote = app.installed && stackNote
+        ? `<div class="app-dependency-note">${escapeHTML(stackNote)}</div>`
         : "";
 
     // --- Operate buttons: install OR uninstall, never both ---
@@ -896,9 +897,9 @@ function appStoreRow(app) {
         const openBtn = !startStopBtn && baseAppId === "phpmyadmin" && app.url
             ? `<button class="op-btn op-open" type="button" data-open-url="${escapeHTML(app.url)}">Open</button>`
             : "";
-        const blockedLabel = !startStopBtn && !openBtn && baseAppId !== "phpmyadmin" && app.dependency_message
-                ? `<span class="app-disabled-label">${escapeHTML(app.status_label || "Dependencies required")}</span>`
-            : "";
+    const blockedLabel = !startStopBtn && !openBtn && baseAppId !== "phpmyadmin" && app.dependency_message
+        ? `<span class="app-disabled-label">${escapeHTML(app.status_label || "Required")}</span>`
+        : "";
         const uninstallBtn = app.can_uninstall
             ? `<button class="op-btn op-uninstall" data-app-action="uninstall" data-app-id="${app.id}" data-app-version="${displayVersion}">Uninstall</button>`
             : "";
@@ -908,7 +909,8 @@ function appStoreRow(app) {
         // Not installed: show Install combo only
         const installVersion = displayVersion || "";
         const installLabel = installJob ? "Install..." : "Install";
-        const isDisabled = installJob ? "disabled" : "";
+        const isInstallDisabled = Boolean(installJob) || Boolean(app._installDisabled);
+        const isDisabled = isInstallDisabled ? "disabled" : "";
         // For PHP per-version rows, no version dropdown — just a single Install button
         if (app.can_install === false) {
             operateBtns = `<span class="app-disabled-label">${escapeHTML(app.status_label || "Configured")}</span>`;
@@ -1047,14 +1049,24 @@ function buildPHPVersionRows(app) {
 function buildGenericVersionRows(app) {
     const availableVersions = Array.isArray(app.available_versions) ? app.available_versions : [];
     if (availableVersions.length === 0) return [app];
+    const baseAppId = String(app.id || "").split(":")[0].toLowerCase();
+    const singleVersionInstall = baseAppId === "apache" || baseAppId === "mysql" || baseAppId === "phpmyadmin";
     
     return availableVersions.map((ver, idx) => {
         const isThisVersionInstalled = app.installed && String(app.version) === String(ver);
         const isShown = app.show_on_dashboard_versions ? app.show_on_dashboard_versions[ver] : (isThisVersionInstalled && app.show_on_dashboard);
         const hasDownload = Boolean(app.download_urls?.[ver] || app.download_url);
+        const installBlockedByInstalledVersion = singleVersionInstall && app.installed && !isThisVersionInstalled;
+        const currentInstalledName = app.version_titles?.[app.version] || `${app.name} ${app.version}`;
+        const nextVersionName = app.version_titles?.[ver] || `${app.name} ${ver}`;
+        const conflictMessage = installBlockedByInstalledVersion
+            ? `Uninstall ${currentInstalledName} before installing ${nextVersionName}.`
+            : "";
         const canInstall = !isThisVersionInstalled && (app.developer !== "custom" || hasDownload);
         const statusLabel = isThisVersionInstalled
             ? app.status_label
+            : installBlockedByInstalledVersion
+                ? "Uninstall current first"
             : canInstall
                 ? "Not installed"
                 : (app.can_install === false ? (app.status_label || "Configured") : "Not installed");
@@ -1063,6 +1075,7 @@ function buildGenericVersionRows(app) {
             ...app,
             _rowVersion: ver,
             _isFirstRow: idx === 0,
+            _installDisabled: installBlockedByInstalledVersion,
             name: app.version_titles?.[ver] || `${app.name} ${ver}`,
             description: app.version_instructions?.[ver] || app.description,
             icon: app.version_icons?.[ver] || app.icon,
@@ -1074,6 +1087,7 @@ function buildGenericVersionRows(app) {
             can_stop: isThisVersionInstalled ? app.can_stop : false,
             status: isThisVersionInstalled ? app.status : "not-installed",
             status_label: statusLabel,
+            dependency_message: installBlockedByInstalledVersion ? conflictMessage : app.dependency_message,
             show_on_dashboard: isShown,
             id: app.id, // Generic apps keep their base ID for API calls
         };

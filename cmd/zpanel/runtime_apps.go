@@ -50,6 +50,7 @@ type runtimeApp struct {
 	Dependencies            []string          `json:"dependencies,omitempty"`
 	MissingDependencies     []string          `json:"missing_dependencies,omitempty"`
 	DependencyMessage       string            `json:"dependency_message,omitempty"`
+	CompatibilityMessage    string            `json:"compatibility_message,omitempty"`
 }
 
 type runtimeAppsResponse struct {
@@ -262,12 +263,26 @@ func (s *appState) handleAppAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := s.runRuntimeAppsAction(action, appID, "", nil)
+	response, err := s.runRuntimeAppsAction(action, runtimeActionTarget(appID, version), "", nil)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func runtimeActionTarget(appID string, version string) string {
+	appID = strings.ToLower(strings.TrimSpace(appID))
+	version = strings.TrimSpace(version)
+	if appID == "" || version == "" || strings.Contains(appID, ":") {
+		return appID
+	}
+	switch appID {
+	case "apache", "php", "mysql", "phpmyadmin":
+		return appID + ":" + version
+	default:
+		return appID
+	}
 }
 
 func (s *appState) handleAppProgress(w http.ResponseWriter, r *http.Request) {
