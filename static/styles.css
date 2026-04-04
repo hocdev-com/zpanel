@@ -3050,14 +3050,12 @@ button.ghost {
 
 /* Operate column */
 .app-operate-cell {
-    --operate-start-width: 56px;
-    --operate-uninstall-width: 92px;
+    --operate-primary-width: 96px;
+    --operate-secondary-width: 88px;
     --operate-actions-gap: 6px;
-    --operate-main-width: calc(var(--operate-start-width) + var(--operate-uninstall-width) + var(--operate-actions-gap));
-    --operate-menu-width: 14px;
+    --operate-main-width: calc(var(--operate-primary-width) + var(--operate-secondary-width) + var(--operate-actions-gap));
+    --operate-menu-width: 32px;
     --operate-menu-gap: 6px;
-    --operate-btn-pad-x: 9px;
-    --operate-btn-font-size: 0.72rem;
     --operate-row-width: calc(var(--operate-main-width) + var(--operate-menu-gap) + var(--operate-menu-width));
     display: grid;
     gap: 7px;
@@ -3089,15 +3087,9 @@ button.ghost {
 .app-operate-actions {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
-    gap: var(--operate-actions-gap);
+    justify-content: stretch;
     box-sizing: border-box;
     min-width: 0;
-    padding: 0;
-    border-radius: 0;
-    background: transparent;
-    border: 0;
-    box-shadow: none;
     width: var(--operate-main-width);
     max-width: var(--operate-main-width);
 }
@@ -3106,9 +3098,48 @@ button.ghost {
     justify-content: flex-start;
 }
 
-.app-operate-actions > .app-install-combo,
-.app-operate-actions > .op-btn[data-app-action="install"] {
-    flex: 1 1 auto;
+.app-action-rail {
+    display: grid;
+    align-items: center;
+    gap: var(--operate-actions-gap);
+    width: 100%;
+    min-height: 40px;
+    padding: 4px;
+    border-radius: 14px;
+    border: 1px solid #dce6f0;
+    background: linear-gradient(180deg, #fbfdff 0%, #f4f8fc 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.app-action-rail.single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.app-action-rail.has-secondary {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.app-action-main,
+.app-action-side {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.app-action-main {
+    width: 100%;
+}
+
+.app-action-main > .op-btn,
+.app-action-main > .app-disabled-label,
+.app-action-main > .app-install-combo,
+.app-action-main > .app-install-main {
+    width: 100%;
+}
+
+.app-action-side > .op-btn,
+.app-action-side > .app-disabled-label {
+    min-width: var(--operate-secondary-width);
 }
 
 .op-menu-btn {
@@ -3119,14 +3150,15 @@ button.ghost {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
-    border: 0;
-    background: transparent;
-    color: #475569;
+    border-radius: 12px;
+    border: 1px solid #dce6f0;
+    background: #f6f9fc;
+    color: #526377;
     font-size: 0.9rem;
     line-height: 1;
-    box-shadow: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
     justify-self: end;
+    transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
 }
 
 .op-menu-dots {
@@ -3159,9 +3191,10 @@ button.ghost {
 }
 
 .op-menu-btn:hover {
-    background: transparent;
-    transform: none;
-    box-shadow: none;
+    background: #edf4fa;
+    border-color: #c8d7e6;
+    color: #21364b;
+    transform: translateY(-1px);
 }
 
 @container app-store-table (max-width: 1120px) {
@@ -3189,14 +3222,12 @@ button.ghost {
     }
 
     .app-operate-cell {
-        --operate-main-width: calc(var(--operate-start-width) + var(--operate-uninstall-width) + var(--operate-actions-gap));
-        --operate-menu-width: 14px;
+        --operate-menu-width: 32px;
         --operate-menu-gap: 6px;
-        --operate-start-width: 48px;
-        --operate-uninstall-width: 92px;
+        --operate-primary-width: 88px;
+        --operate-secondary-width: 84px;
         --operate-actions-gap: 4px;
-        --operate-btn-pad-x: 6px;
-        --operate-btn-font-size: 0.69rem;
+        --operate-main-width: calc(var(--operate-primary-width) + var(--operate-secondary-width) + var(--operate-actions-gap));
     }
 
 }
@@ -3229,13 +3260,12 @@ button.ghost {
     }
 
     .app-operate-cell {
-        --operate-start-width: 42px;
-        --operate-uninstall-width: 84px;
+        --operate-primary-width: 84px;
+        --operate-secondary-width: 78px;
         --operate-actions-gap: 3px;
-        --operate-menu-width: 14px;
+        --operate-menu-width: 28px;
         --operate-menu-gap: 6px;
-        --operate-btn-pad-x: 5px;
-        --operate-btn-font-size: 0.66rem;
+        --operate-main-width: calc(var(--operate-primary-width) + var(--operate-secondary-width) + var(--operate-actions-gap));
     }
 
     .app-status-pill {
@@ -3288,7 +3318,7 @@ button.ghost {
     width: auto;
     min-width: 72px;
     min-height: 32px;
-    padding: 6px 10px;
+    padding: 7px 11px;
     box-sizing: border-box;
     display: inline-flex;
     align-items: center;
@@ -3296,27 +3326,12 @@ button.ghost {
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
-    border-radius: 10px;
+    border-radius: 11px;
     flex-shrink: 0;
-    box-shadow: none;
+    border: 1px solid transparent;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
     letter-spacing: 0.01em;
-}
-
-.app-operate-actions > .op-btn:not([data-app-action="install"]) {
-    min-width: 0;
-    padding: 6px var(--operate-btn-pad-x);
-    font-size: var(--operate-btn-font-size);
-}
-
-.app-operate-actions > .op-start,
-.app-operate-actions > .op-stop {
-    flex: 0 0 var(--operate-start-width);
-    min-width: var(--operate-start-width);
-}
-
-.app-operate-actions > .op-uninstall {
-    flex: 0 0 var(--operate-uninstall-width);
-    min-width: var(--operate-uninstall-width);
+    transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
 /* Action buttons should have uniform width where possible */
@@ -3326,19 +3341,25 @@ button.ghost {
 }
 
 .op-start {
-    background: linear-gradient(180deg, #158f86 0%, #11756e 100%);
-    box-shadow: none;
+    background: linear-gradient(180deg, #199386 0%, #15776d 100%);
+    color: #ffffff;
 }
 
 .op-stop {
     background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
-    box-shadow: none;
+    color: #ffffff;
+}
+
+.op-open {
+    background: #edf7f5;
+    border-color: #c8ebe3;
+    color: #166b5f;
 }
 
 .op-uninstall {
-    background: #fff3f5;
+    background: #fff6f7;
     color: #a11d33;
-    border: 1px solid #f3c5ce;
+    border: 1px solid #f0d0d6;
 }
 
 /* Install combo inside operate */
@@ -3351,26 +3372,27 @@ button.ghost {
     width: 100%;
     min-width: 0;
     flex-shrink: 0;
+    overflow: hidden;
+    border-radius: 11px;
 }
 
 .app-install-main {
     flex: 1;
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
+    border-radius: 0;
     margin-right: 0;
     min-height: 32px;
-    padding: 6px 9px;
+    padding: 7px 11px;
     box-sizing: border-box;
     font-size: 0.78rem;
     box-shadow: none;
 }
 
 .app-install-toggle {
-    width: 26px;
-    min-width: 26px;
+    width: 30px;
+    min-width: 30px;
     padding: 6px 0;
     box-sizing: border-box;
-    background: #1d4ed8;
+    background: #1447c7;
     border: 0;
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
@@ -3378,7 +3400,7 @@ button.ghost {
     font-size: 0;
     position: relative;
     margin-left: 0;
-    border-left: 1px solid rgba(255, 255, 255, 0.22);
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
     box-shadow: none;
 }
 
@@ -3386,8 +3408,21 @@ button.ghost {
 .app-operate-cell .app-install-main:hover,
 .app-operate-cell .app-install-toggle:hover,
 .app-operate-cell .op-menu-btn:hover {
-    transform: none;
     box-shadow: none;
+}
+
+.app-operate-cell .op-btn:hover:not(:disabled),
+.app-operate-cell .app-install-main:hover:not(:disabled),
+.app-operate-cell .app-install-toggle:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.app-operate-cell .op-btn:disabled,
+.app-operate-cell .app-install-main:disabled,
+.app-operate-cell .app-install-toggle:disabled {
+    opacity: 0.56;
+    cursor: not-allowed;
+    transform: none;
 }
 
 .app-install-toggle::after {

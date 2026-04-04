@@ -897,13 +897,20 @@ function appStoreRow(app) {
         const openBtn = !startStopBtn && baseAppId === "phpmyadmin" && app.url
             ? `<button class="op-btn op-open" type="button" data-open-url="${escapeHTML(app.url)}">Open</button>`
             : "";
-    const blockedLabel = !startStopBtn && !openBtn && baseAppId !== "phpmyadmin" && app.dependency_message
+        const blockedLabel = !startStopBtn && !openBtn && baseAppId !== "phpmyadmin" && app.dependency_message
         ? `<span class="app-disabled-label">${escapeHTML(app.status_label || "Required")}</span>`
         : "";
         const uninstallBtn = app.can_uninstall
             ? `<button class="op-btn op-uninstall" data-app-action="uninstall" data-app-id="${app.id}" data-app-version="${displayVersion}">Uninstall</button>`
             : "";
-        operateBtns = openBtn + startStopBtn + blockedLabel + uninstallBtn;
+        const primaryAction = openBtn || startStopBtn || blockedLabel;
+        const secondaryAction = uninstallBtn;
+        operateBtns = `
+            <div class="app-action-rail ${secondaryAction ? "has-secondary" : "single"}">
+                <div class="app-action-main">${primaryAction}</div>
+                ${secondaryAction ? `<div class="app-action-side">${secondaryAction}</div>` : ""}
+            </div>
+        `;
         operateMenuBtn = `<button class="op-menu-btn" data-app-action="setting" data-app-id="${app.id}" data-app-version="${app._rowVersion || ""}" aria-label="Open settings" title="Settings"><span class="op-menu-dots" aria-hidden="true"></span></button>`;
     } else {
         // Not installed: show Install combo only
@@ -913,9 +920,21 @@ function appStoreRow(app) {
         const isDisabled = isInstallDisabled ? "disabled" : "";
         // For PHP per-version rows, no version dropdown — just a single Install button
         if (app.can_install === false) {
-            operateBtns = `<span class="app-disabled-label">${escapeHTML(app.status_label || "Configured")}</span>`;
+            operateBtns = `
+                <div class="app-action-rail single">
+                    <div class="app-action-main">
+                        <span class="app-disabled-label">${escapeHTML(app.status_label || "Configured")}</span>
+                    </div>
+                </div>
+            `;
         } else if (app._rowVersion) {
-            operateBtns = `<button class="alt op-btn" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${isDisabled}>${installLabel}</button>`;
+            operateBtns = `
+                <div class="app-action-rail single">
+                    <div class="app-action-main">
+                        <button class="alt op-btn" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${isDisabled}>${installLabel}</button>
+                    </div>
+                </div>
+            `;
         } else {
             const availableVersions = Array.isArray(app.available_versions) ? app.available_versions : [];
             const versionOptions = availableVersions.map((v) => {
@@ -927,9 +946,13 @@ function appStoreRow(app) {
                 <div class="app-version-menu" data-app-version-menu="${app.id}" hidden>${versionOptions}</div>
             ` : "";
             operateBtns = `
-                <div class="app-install-combo" data-app-install-combo="${app.id}">
-                    <button class="alt app-install-main" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${isDisabled}>${installLabel}</button>
-                    ${versionDropdown}
+                <div class="app-action-rail single">
+                    <div class="app-action-main">
+                        <div class="app-install-combo" data-app-install-combo="${app.id}">
+                            <button class="alt app-install-main" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${isDisabled}>${installLabel}</button>
+                            ${versionDropdown}
+                        </div>
+                    </div>
                 </div>
             `;
         }
