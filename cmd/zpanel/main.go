@@ -1086,6 +1086,7 @@ func registerRoutes(mux *http.ServeMux, state *appState) {
 func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 	dashboardSettings := s.loadAppSettings()
 	appStoreSettings := loadAppStoreSettingsFromDB(s.appRoot)
+	apps = appendSyntheticAppStoreApps(apps, appStoreSettings)
 
 	for i := range apps {
 		appID := apps[i].ID
@@ -1177,6 +1178,95 @@ func (s *appState) injectAppSettings(apps []runtimeApp) []runtimeApp {
 		}
 	}
 	return apps
+}
+
+func appendSyntheticAppStoreApps(apps []runtimeApp, settings appStoreSettingsFile) []runtimeApp {
+	existing := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		appID := strings.ToLower(strings.TrimSpace(app.ID))
+		if appID != "" {
+			existing[appID] = struct{}{}
+		}
+	}
+
+	for _, appID := range appStoreConfiguredAppIDs(settings) {
+		if _, ok := existing[appID]; ok {
+			continue
+		}
+
+		versions := collectAppStoreSettingsVersions(appID, nil, settings)
+		if len(versions) == 0 {
+			continue
+		}
+		apps = append(apps, newSyntheticAppStoreApp(appID, versions, settings))
+	}
+
+	return apps
+}
+
+func appStoreConfiguredAppIDs(settings appStoreSettingsFile) []string {
+	idSet := map[string]struct{}{}
+	appendIDs := func(values map[string]map[string]string) {
+		for appID, versionMap := range values {
+			if strings.TrimSpace(appID) == "" || len(versionMap) == 0 {
+				continue
+			}
+			idSet[strings.ToLower(strings.TrimSpace(appID))] = struct{}{}
+		}
+	}
+
+	appendIDs(settings.Downloads)
+	appendIDs(settings.Titles)
+	appendIDs(settings.Instructions)
+	appendIDs(settings.Icons)
+	for appID, versionMap := range settings.ShowOnDashboard {
+		if strings.TrimSpace(appID) == "" || len(versionMap) == 0 {
+			continue
+		}
+		idSet[strings.ToLower(strings.TrimSpace(appID))] = struct{}{}
+	}
+
+	ids := make([]string, 0, len(idSet))
+	for appID := range idSet {
+		ids = append(ids, appID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func newSyntheticAppStoreApp(appID string, versions []string, settings appStoreSettingsFile) runtimeApp {
+	currentVersion := ""
+	if len(versions) > 0 {
+		currentVersion = versions[0]
+	}
+
+	downloadURLs := map[string]string{}
+	for _, version := range versions {
+		if rawURL := strings.TrimSpace(valueAt(settings.Downloads, appID, version)); rawURL != "" {
+			downloadURLs[version] = rawURL
+		}
+	}
+
+	return runtimeApp{
+		ID:                appID,
+		Name:              strings.Title(appID),
+		Version:           currentVersion,
+		SelectedVersion:   currentVersion,
+		AvailableVersions: versions,
+		Description:       defaultAppStoreReleaseInstructions(appID, currentVersion),
+		Developer:         "custom",
+		Status:            "not-installed",
+		StatusLabel:       "Configured",
+		Installed:         false,
+		Running:           false,
+		DownloadURL:       downloadURLs[currentVersion],
+		DownloadURLs:      downloadURLs,
+		CanInstall:        false,
+		CanStart:          false,
+		CanStop:           false,
+		CanOpen:           false,
+		CanUninstall:      false,
+	}
 }
 
 func (s *appState) injectJobStatus(apps []runtimeApp) []runtimeApp {

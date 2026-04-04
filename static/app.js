@@ -900,7 +900,9 @@ function appStoreRow(app) {
         const installLabel = installJob ? "Install..." : "Install";
         const isDisabled = installJob ? "disabled" : "";
         // For PHP per-version rows, no version dropdown — just a single Install button
-        if (app._rowVersion) {
+        if (app.can_install === false) {
+            operateBtns = `<span class="app-disabled-label">${escapeHTML(app.status_label || "Configured")}</span>`;
+        } else if (app._rowVersion) {
             operateBtns = `<button class="alt op-btn" data-app-action="install" data-app-id="${app.id}" data-app-version="${installVersion}" ${isDisabled}>${installLabel}</button>`;
         } else {
             const availableVersions = Array.isArray(app.available_versions) ? app.available_versions : [];
@@ -1038,6 +1040,7 @@ function buildGenericVersionRows(app) {
     return availableVersions.map((ver, idx) => {
         const isThisVersionInstalled = app.installed && String(app.version) === String(ver);
         const isShown = app.show_on_dashboard_versions ? app.show_on_dashboard_versions[ver] : (isThisVersionInstalled && app.show_on_dashboard);
+        const canInstall = Boolean(app.can_install) && !isThisVersionInstalled;
         
         return {
             ...app,
@@ -1048,12 +1051,12 @@ function buildGenericVersionRows(app) {
             icon: app.version_icons?.[ver] || app.icon,
             version: ver,
             installed: isThisVersionInstalled,
-            can_install: !isThisVersionInstalled,
+            can_install: canInstall,
             can_uninstall: isThisVersionInstalled,
             can_start: isThisVersionInstalled ? app.can_start : false,
             can_stop: isThisVersionInstalled ? app.can_stop : false,
             status: isThisVersionInstalled ? app.status : "not-installed",
-            status_label: isThisVersionInstalled ? app.status_label : "Not installed",
+            status_label: isThisVersionInstalled ? app.status_label : (app.can_install === false ? (app.status_label || "Configured") : "Not installed"),
             show_on_dashboard: isShown,
             id: app.id, // Generic apps keep their base ID for API calls
         };
@@ -1650,80 +1653,146 @@ function renderAppStoreSettings(payload) {
         return;
     }
 
-    const rows = groups.flatMap((group) => {
+    const groupsMarkup = groups.map((group) => {
         const releases = Array.isArray(group.releases) ? group.releases : [];
-        return releases.map((release) => `
-            <div class="app-store-settings-row">
-                <span class="app-store-settings-icon">
-                    <label class="app-store-icon-upload">
-                        <input
-                            type="file"
-                            accept="image/*"
-                            data-app-store-icon-file
-                            data-app-id="${escapeHTML(group.id || "")}"
-                            data-app-version="${escapeHTML(release.version || "")}"
-                        />
-                        <input
-                            type="hidden"
-                            data-app-store-icon
-                            data-app-id="${escapeHTML(group.id || "")}"
-                            data-app-version="${escapeHTML(release.version || "")}"
-                            value="${escapeHTML(release.icon || "")}"
-                        />
-                        <span class="app-store-icon-preview ${release.icon ? "has-image" : ""}">
-                            ${release.icon ? `<img src="${escapeHTML(release.icon)}" alt="App icon">` : `<span>24x24</span>`}
-                        </span>
-                        <span class="app-store-icon-copy">Upload</span>
-                    </label>
-                </span>
-                <span class="app-store-settings-title">
-                    <input
-                        type="text"
-                        data-app-store-title
-                        data-app-id="${escapeHTML(group.id || "")}"
-                        data-app-version="${escapeHTML(release.version || "")}"
-                        value="${escapeHTML(release.title || release.default_title || "")}"
-                        placeholder="${escapeHTML(release.default_title || "")}"
-                    />
-                </span>
-                <span class="app-store-settings-description">
-                    <input
-                        type="text"
-                        data-app-store-instructions
-                        data-app-id="${escapeHTML(group.id || "")}"
-                        data-app-version="${escapeHTML(release.version || "")}"
-                        value="${escapeHTML(release.instructions || release.default_instructions || "")}"
-                        placeholder="${escapeHTML(release.default_instructions || "")}"
-                    />
-                </span>
-                <span class="app-store-settings-link">
-                    <input
-                        type="url"
-                        data-app-store-download
-                        data-app-id="${escapeHTML(group.id || "")}"
-                        data-app-version="${escapeHTML(release.version || "")}"
-                        value="${escapeHTML(release.url || "")}"
-                        placeholder="${escapeHTML(release.default_url || "")}"
-                    />
-                </span>
-            </div>
-        `);
+        const rows = releases.map((release) => renderAppStoreSettingsRow(group, release)).join("");
+        return `
+            <section class="app-store-settings-group" data-app-store-group data-app-id="${escapeHTML(group.id || "")}">
+                <div class="app-store-settings-group-head">
+                    <div>
+                        <strong>${escapeHTML(group.name || group.id || "")}</strong>
+                        <span>${releases.length} release${releases.length === 1 ? "" : "s"}</span>
+                    </div>
+                </div>
+                <div class="app-store-settings-table">
+                    <div class="app-store-settings-head">
+                        <span>Version</span>
+                        <span>Icon</span>
+                        <span>Title</span>
+                        <span>Instructions</span>
+                        <span>Link</span>
+                    </div>
+                    <div class="app-store-settings-body" data-app-store-group-body data-app-id="${escapeHTML(group.id || "")}">${rows}</div>
+                </div>
+            </section>
+        `;
     }).join("");
 
+    const groupOptions = groups.map((group) => `
+        <option value="${escapeHTML(group.id || "")}">${escapeHTML(group.name || group.id || "")}</option>
+    `).join("");
+
     appStoreSettingsFormEl.innerHTML = `
-        <div class="app-store-settings-table">
-            <div class="app-store-settings-head">
-                <span>Icon</span>
-                <span>Title</span>
-                <span>Instructions</span>
-                <span>Link</span>
-            </div>
-            <div class="app-store-settings-body">${rows}</div>
+        <div class="app-store-settings-toolbar">
+            <select id="app-store-add-group" aria-label="Choose app group to add a release">
+                ${groupOptions}
+            </select>
+            <button type="button" class="app-store-settings-add" data-app-store-add-row>+</button>
         </div>
+        ${groupsMarkup}
         <div class="app-store-settings-actions">
             <button type="submit">Save Settings</button>
         </div>
     `;
+}
+
+function renderAppStoreSettingsRow(group, release = {}) {
+    const appId = String(group?.id || "").trim();
+    const version = String(release?.version || "").trim();
+    const isCustom = Boolean(release?.is_custom);
+    return `
+        <div class="app-store-settings-row" data-app-store-row data-app-id="${escapeHTML(appId)}" data-app-store-custom="${isCustom ? "true" : "false"}">
+            <span class="app-store-settings-version">
+                <input
+                    type="text"
+                    data-app-store-version-input
+                    value="${escapeHTML(version)}"
+                    placeholder="Version"
+                    ${isCustom ? "" : "readonly"}
+                />
+            </span>
+            <span class="app-store-settings-icon">
+                <label class="app-store-icon-upload">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        data-app-store-icon-file
+                    />
+                    <input
+                        type="hidden"
+                        data-app-store-icon
+                        value="${escapeHTML(release.icon || "")}"
+                    />
+                    <span class="app-store-icon-preview ${release.icon ? "has-image" : ""}">
+                        ${release.icon ? `<img src="${escapeHTML(release.icon)}" alt="App icon">` : `<span>24x24</span>`}
+                    </span>
+                </label>
+            </span>
+            <span class="app-store-settings-title">
+                <input
+                    type="text"
+                    data-app-store-title
+                    value="${escapeHTML(release.title || release.default_title || "")}"
+                    placeholder="${escapeHTML(release.default_title || "")}"
+                />
+            </span>
+            <span class="app-store-settings-description">
+                <input
+                    type="text"
+                    data-app-store-instructions
+                    value="${escapeHTML(release.instructions || release.default_instructions || "")}"
+                    placeholder="${escapeHTML(release.default_instructions || "")}"
+                />
+            </span>
+            <span class="app-store-settings-link">
+                <input
+                    type="url"
+                    data-app-store-download
+                    value="${escapeHTML(release.url || "")}"
+                    placeholder="${escapeHTML(release.default_url || "")}"
+                />
+            </span>
+        </div>
+    `;
+}
+
+function createAppStoreDraftRelease(group) {
+    const appId = String(group?.id || "").trim();
+    return {
+        version: "",
+        title: "",
+        default_title: defaultAppTitleForVersion(appId, ""),
+        instructions: "",
+        default_instructions: defaultAppInstructionsForVersion(appId, ""),
+        icon: "",
+        url: "",
+        default_url: "",
+        is_custom: true,
+    };
+}
+
+function defaultAppTitleForVersion(appId, version) {
+    const normalizedId = String(appId || "").trim();
+    const normalizedVersion = String(version || "").trim();
+    const baseName = normalizedId ? `${normalizedId.charAt(0).toUpperCase()}${normalizedId.slice(1)}` : "App";
+    return normalizedVersion ? `${baseName} ${normalizedVersion}` : `${baseName} release`;
+}
+
+function defaultAppInstructionsForVersion(appId, version) {
+    const normalizedVersion = String(version || "").trim();
+    if (!normalizedVersion) {
+        return "Enter instructions for this release.";
+    }
+    if (String(appId || "").trim() === "apache") {
+        return "Portable web server stored in data/runtime.";
+    }
+    if (String(appId || "").trim() === "php") {
+        return "Portable PHP runtime. Multiple versions supported per website.";
+    }
+    if (String(appId || "").trim() === "mysql") {
+        return "Portable MySQL server stored in data/runtime.";
+    }
+    return `Instructions for ${appId} ${normalizedVersion}.`;
 }
 
 async function refreshAppStoreSettings(options = {}) {
@@ -2293,6 +2362,28 @@ appStoreSettingsFormEl.addEventListener("change", async (event) => {
     }
 });
 
+appStoreSettingsFormEl.addEventListener("click", (event) => {
+    const addButton = event.target.closest("[data-app-store-add-row]");
+    if (!addButton) {
+        return;
+    }
+
+    const groupSelect = document.getElementById("app-store-add-group");
+    const appId = String(groupSelect?.value || "").trim();
+    const body = appStoreSettingsFormEl.querySelector(`[data-app-store-group-body][data-app-id="${CSS.escape(appId)}"]`);
+    if (!body) {
+        return;
+    }
+
+    const selectedLabel = groupSelect?.selectedOptions?.[0]?.textContent || appId;
+    const draft = createAppStoreDraftRelease({ id: appId, name: selectedLabel });
+    body.insertAdjacentHTML("beforeend", renderAppStoreSettingsRow({ id: appId }, draft));
+    const rows = body.querySelectorAll("[data-app-store-row]");
+    const newRow = rows[rows.length - 1];
+    const versionInput = newRow?.querySelector("[data-app-store-version-input]");
+    versionInput?.focus();
+});
+
 appStoreSettingsFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -2301,59 +2392,65 @@ appStoreSettingsFormEl.addEventListener("submit", async (event) => {
     const titles = {};
     const instructions = {};
     const icons = {};
+    const seenVersions = new Map();
 
-    appStoreSettingsFormEl.querySelectorAll("[data-app-store-download]").forEach((input) => {
-        const appId = String(input.dataset.appId || "").trim();
-        const version = String(input.dataset.appVersion || "").trim();
-        const value = String(input.value || "").trim();
-        if (!appId || !version) {
+    for (const row of appStoreSettingsFormEl.querySelectorAll("[data-app-store-row]")) {
+        const appId = String(row.dataset.appId || "").trim();
+        const versionInput = row.querySelector("[data-app-store-version-input]");
+        const titleInput = row.querySelector("[data-app-store-title]");
+        const instructionsInput = row.querySelector("[data-app-store-instructions]");
+        const downloadInput = row.querySelector("[data-app-store-download]");
+        const iconInput = row.querySelector("[data-app-store-icon]");
+
+        const version = String(versionInput?.value || "").trim();
+        const title = String(titleInput?.value || "").trim();
+        const instruction = String(instructionsInput?.value || "").trim();
+        const download = String(downloadInput?.value || "").trim();
+        const icon = String(iconInput?.value || "").trim();
+        const hasContent = Boolean(title || instruction || download || icon);
+
+        if (!appId) {
+            continue;
+        }
+        if (!version) {
+            if (hasContent) {
+                showResult("Error: Each new release row must have a version.");
+                versionInput?.focus();
+                return;
+            }
+            continue;
+        }
+
+        const versionKey = `${appId}:${version.toLowerCase()}`;
+        if (seenVersions.has(versionKey)) {
+            showResult(`Error: Duplicate version ${version} in ${appId}.`);
+            versionInput?.focus();
             return;
         }
+        seenVersions.set(versionKey, true);
 
         if (!downloads[appId]) {
             downloads[appId] = {};
         }
-        downloads[appId][version] = value;
-    });
+        downloads[appId][version] = download;
 
-    appStoreSettingsFormEl.querySelectorAll("[data-app-store-title]").forEach((input) => {
-        const appId = String(input.dataset.appId || "").trim();
-        const version = String(input.dataset.appVersion || "").trim();
-        const value = String(input.value || "").trim();
-        if (!appId || !version) {
-            return;
-        }
         if (!titles[appId]) {
             titles[appId] = {};
         }
-        titles[appId][version] = value;
-    });
+        titles[appId][version] = title;
 
-    appStoreSettingsFormEl.querySelectorAll("[data-app-store-instructions]").forEach((input) => {
-        const appId = String(input.dataset.appId || "").trim();
-        const version = String(input.dataset.appVersion || "").trim();
-        const value = String(input.value || "").trim();
-        if (!appId || !version) {
-            return;
-        }
         if (!instructions[appId]) {
             instructions[appId] = {};
         }
-        instructions[appId][version] = value;
-    });
+        instructions[appId][version] = instruction;
 
-    appStoreSettingsFormEl.querySelectorAll("[data-app-store-icon]").forEach((input) => {
-        const appId = String(input.dataset.appId || "").trim();
-        const version = String(input.dataset.appVersion || "").trim();
-        const value = String(input.value || "").trim();
-        if (!appId || !version || !value) {
-            return;
+        if (icon) {
+            if (!icons[appId]) {
+                icons[appId] = {};
+            }
+            icons[appId][version] = icon;
         }
-        if (!icons[appId]) {
-            icons[appId] = {};
-        }
-        icons[appId][version] = value;
-    });
+    }
 
     submitButton.disabled = true;
     submitButton.textContent = "Saving...";
@@ -2365,6 +2462,7 @@ appStoreSettingsFormEl.addEventListener("submit", async (event) => {
         });
         renderAppStoreSettings(payload);
         await refreshApps({ force: true });
+        closeSettingsAppListModal();
         showResult(payload.message || "App Store settings saved.");
     } catch (error) {
         showResult(`Error: ${error.message}`);

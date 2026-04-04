@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -28,6 +30,7 @@ type appStoreSettingsEntry struct {
 	URL                 string `json:"url"`
 	DefaultURL          string `json:"default_url"`
 	ShowOnDashboard     bool   `json:"show_on_dashboard"`
+	IsCustom            bool   `json:"is_custom,omitempty"`
 }
 
 type appStoreSettingsGroup struct {
@@ -187,7 +190,8 @@ func normalizeAppStoreSettings(req appStoreSettingsRequest) (appStoreSettingsFil
 		ShowOnDashboard: map[string]map[string]bool{},
 	}
 
-	for appID, baseReleases := range catalog {
+	for _, appID := range appStoreGroupOrder() {
+		baseReleases := catalog[appID]
 		validVersions := make(map[string]struct{}, len(baseReleases))
 		defaultURLs := make(map[string]string, len(baseReleases))
 		defaultTitles := make(map[string]string, len(baseReleases))
@@ -200,6 +204,19 @@ func normalizeAppStoreSettings(req appStoreSettingsRequest) (appStoreSettingsFil
 			defaultInstructions[release.Version] = defaultAppStoreReleaseInstructions(appID, release.Version)
 		}
 
+		for _, version := range collectAppStoreRequestVersions(req, appID) {
+			validVersions[version] = struct{}{}
+			if _, ok := defaultTitles[version]; !ok {
+				defaultTitles[version] = defaultAppStoreReleaseTitle(appID, version)
+			}
+			if _, ok := defaultInstructions[version]; !ok {
+				defaultInstructions[version] = defaultAppStoreReleaseInstructions(appID, version)
+			}
+			if _, ok := defaultURLs[version]; !ok {
+				defaultURLs[version] = ""
+			}
+		}
+
 		for version := range validVersions {
 			downloadURL := strings.TrimSpace(valueAt(req.Downloads, appID, version))
 			title := strings.TrimSpace(valueAt(req.Titles, appID, version))
@@ -208,16 +225,19 @@ func normalizeAppStoreSettings(req appStoreSettingsRequest) (appStoreSettingsFil
 				instructions = strings.TrimSpace(valueAt(req.Descriptions, appID, version))
 			}
 			showOnDashboard := valueAtBool(req.ShowOnDashboard, appID, version)
+			isBaseRelease := defaultURLs[version] != ""
 
-			if downloadURL != "" && downloadURL != defaultURLs[version] {
+			if downloadURL != "" {
 				parsedURL, err := url.ParseRequestURI(downloadURL)
 				if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 					return appStoreSettingsFile{}, fmt.Errorf("invalid download URL for %s %s", strings.Title(appID), version)
 				}
-				if settings.Downloads[appID] == nil {
-					settings.Downloads[appID] = map[string]string{}
+				if !isBaseRelease || downloadURL != defaultURLs[version] {
+					if settings.Downloads[appID] == nil {
+						settings.Downloads[appID] = map[string]string{}
+					}
+					settings.Downloads[appID][version] = downloadURL
 				}
-				settings.Downloads[appID][version] = downloadURL
 			}
 
 			if title != "" && title != defaultTitles[version] {
@@ -350,14 +370,14 @@ func saveAppStoreSettingsWithDB(db *sql.DB, settings appStoreSettingsFile) error
 	}
 
 	catalog := appStoreReleaseCatalog()
-	for appID, releases := range catalog {
-		for _, release := range releases {
-			downloadURL := strings.TrimSpace(valueAt(settings.Downloads, appID, release.Version))
-			title := strings.TrimSpace(valueAt(settings.Titles, appID, release.Version))
-			description := strings.TrimSpace(valueAt(settings.Instructions, appID, release.Version))
-			iconData := strings.TrimSpace(valueAt(settings.Icons, appID, release.Version))
+	for _, appID := range appStoreGroupOrder() {
+		for _, version := range collectAppStoreSettingsVersions(appID, catalog[appID], settings) {
+			downloadURL := strings.TrimSpace(valueAt(settings.Downloads, appID, version))
+			title := strings.TrimSpace(valueAt(settings.Titles, appID, version))
+			description := strings.TrimSpace(valueAt(settings.Instructions, appID, version))
+			iconData := strings.TrimSpace(valueAt(settings.Icons, appID, version))
 			showOnDashboard := 0
-			if settings.ShowOnDashboard != nil && settings.ShowOnDashboard[appID] != nil && settings.ShowOnDashboard[appID][release.Version] {
+			if settings.ShowOnDashboard != nil && settings.ShowOnDashboard[appID] != nil && settings.ShowOnDashboard[appID][version] {
 				showOnDashboard = 1
 			}
 
@@ -367,7 +387,7 @@ func saveAppStoreSettingsWithDB(db *sql.DB, settings appStoreSettingsFile) error
 			if _, err := tx.Exec(
 				`INSERT INTO app_store_settings (app_id, version, download_url, title, description, icon_data, show_on_dashboard) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 				appID,
-				release.Version,
+				version,
 				downloadURL,
 				title,
 				description,
@@ -403,28 +423,56 @@ func appStoreEffectiveReleases(projectRoot string, appID string) []runtimeReleas
 	out := make([]runtimeRelease, len(base))
 	copy(out, base)
 
-	overrides := loadAppStoreSettingsFromDB(projectRoot).Downloads[appID]
+	saved := loadAppStoreSettingsFromDB(projectRoot)
+	overrides := saved.Downloads[appID]
 	for i := range out {
 		if overrideURL := strings.TrimSpace(overrides[out[i].Version]); overrideURL != "" {
 			out[i].URL = overrideURL
+			if fileName := appStoreReleaseFileName(appID, out[i].Version, overrideURL); fileName != "" {
+				out[i].FileName = fileName
+			}
 		}
+	}
+
+	baseVersions := make(map[string]struct{}, len(base))
+	for _, release := range base {
+		baseVersions[release.Version] = struct{}{}
+	}
+
+	extraVersions := make([]string, 0)
+	for version, rawURL := range overrides {
+		version = strings.TrimSpace(version)
+		if version == "" || strings.TrimSpace(rawURL) == "" {
+			continue
+		}
+		if _, ok := baseVersions[version]; ok {
+			continue
+		}
+		extraVersions = append(extraVersions, version)
+	}
+	sort.Strings(extraVersions)
+
+	for _, version := range extraVersions {
+		overrideURL := strings.TrimSpace(overrides[version])
+		out = append(out, runtimeRelease{
+			Version:  version,
+			URL:      overrideURL,
+			FileName: appStoreReleaseFileName(appID, version, overrideURL),
+		})
 	}
 
 	return out
 }
 
 func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreSettingsResponse {
-	groupOrder := []string{"apache", "php", "mysql"}
+	groupOrder := appStoreGroupOrder()
 	groups := make([]appStoreSettingsGroup, 0, len(groupOrder))
 	catalog := appStoreReleaseCatalog()
 	saved := loadAppStoreSettingsFromDB(projectRoot)
 
 	for _, appID := range groupOrder {
 		baseReleases := catalog[appID]
-		effectiveReleases := appStoreEffectiveReleases(projectRoot, appID)
-		if len(baseReleases) == 0 {
-			continue
-		}
+		versions := collectAppStoreSettingsVersions(appID, baseReleases, saved)
 
 		groupName := strings.Title(appID)
 		if len(baseReleases) > 0 {
@@ -436,11 +484,21 @@ func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreS
 		group := appStoreSettingsGroup{
 			ID:       appID,
 			Name:     groupName,
-			Releases: make([]appStoreSettingsEntry, 0, len(baseReleases)),
+			Releases: make([]appStoreSettingsEntry, 0, len(versions)),
 		}
 
-		for i := range baseReleases {
-			version := baseReleases[i].Version
+		baseByVersion := make(map[string]runtimeRelease, len(baseReleases))
+		for _, release := range baseReleases {
+			baseByVersion[release.Version] = release
+		}
+
+		for _, version := range versions {
+			baseRelease, isBase := baseByVersion[version]
+			defaultURL := strings.TrimSpace(baseRelease.URL)
+			effectiveURL := strings.TrimSpace(valueAt(saved.Downloads, appID, version))
+			if effectiveURL == "" {
+				effectiveURL = defaultURL
+			}
 			group.Releases = append(group.Releases, appStoreSettingsEntry{
 				Version:             version,
 				Title:               strings.TrimSpace(valueAt(saved.Titles, appID, version)),
@@ -448,9 +506,10 @@ func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreS
 				Instructions:        strings.TrimSpace(valueAt(saved.Instructions, appID, version)),
 				DefaultInstructions: defaultAppStoreReleaseInstructions(appID, version),
 				Icon:                strings.TrimSpace(valueAt(saved.Icons, appID, version)),
-				URL:                 effectiveReleases[i].URL,
-				DefaultURL:          baseReleases[i].URL,
+				URL:                 effectiveURL,
+				DefaultURL:          defaultURL,
 				ShowOnDashboard:     valueAtBool(saved.ShowOnDashboard, appID, version),
+				IsCustom:            !isBase,
 			})
 		}
 
@@ -462,6 +521,115 @@ func buildAppStoreSettingsResponse(projectRoot string, message string) appStoreS
 		Groups:   groups,
 		Message:  message,
 	}
+}
+
+func appStoreGroupOrder() []string {
+	return []string{"apache", "php", "mysql", "database", "other"}
+}
+
+func collectAppStoreRequestVersions(req appStoreSettingsRequest, appID string) []string {
+	versionSet := map[string]struct{}{}
+	for version := range req.Downloads[appID] {
+		if version = strings.TrimSpace(version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+	}
+	for version := range req.Titles[appID] {
+		if version = strings.TrimSpace(version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+	}
+	for version := range req.Instructions[appID] {
+		if version = strings.TrimSpace(version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+	}
+	for version := range req.Descriptions[appID] {
+		if version = strings.TrimSpace(version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+	}
+	for version := range req.Icons[appID] {
+		if version = strings.TrimSpace(version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+	}
+	for version := range req.ShowOnDashboard[appID] {
+		if version = strings.TrimSpace(version); version != "" {
+			versionSet[version] = struct{}{}
+		}
+	}
+
+	versions := make([]string, 0, len(versionSet))
+	for version := range versionSet {
+		versions = append(versions, version)
+	}
+	sort.Strings(versions)
+	return versions
+}
+
+func collectAppStoreSettingsVersions(appID string, baseReleases []runtimeRelease, settings appStoreSettingsFile) []string {
+	versionSet := map[string]struct{}{}
+	versions := make([]string, 0, len(baseReleases))
+	for _, release := range baseReleases {
+		version := strings.TrimSpace(release.Version)
+		if version == "" {
+			continue
+		}
+		versionSet[version] = struct{}{}
+		versions = append(versions, version)
+	}
+
+	appendExtraVersions := func(values map[string]map[string]string) {
+		for version := range values[appID] {
+			version = strings.TrimSpace(version)
+			if version == "" {
+				continue
+			}
+			if _, ok := versionSet[version]; ok {
+				continue
+			}
+			versionSet[version] = struct{}{}
+			versions = append(versions, version)
+		}
+	}
+
+	appendExtraVersions(settings.Downloads)
+	appendExtraVersions(settings.Titles)
+	appendExtraVersions(settings.Instructions)
+	appendExtraVersions(settings.Icons)
+	for version := range settings.ShowOnDashboard[appID] {
+		version = strings.TrimSpace(version)
+		if version == "" {
+			continue
+		}
+		if _, ok := versionSet[version]; ok {
+			continue
+		}
+		versionSet[version] = struct{}{}
+		versions = append(versions, version)
+	}
+
+	if len(versions) > len(baseReleases) {
+		sort.Strings(versions[len(baseReleases):])
+	}
+	return versions
+}
+
+func appStoreReleaseFileName(appID string, version string, rawURL string) string {
+	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
+	if err == nil {
+		name := strings.TrimSpace(path.Base(parsedURL.Path))
+		if name != "" && name != "." && name != "/" {
+			return name
+		}
+	}
+
+	safeVersion := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ":", "-", "*", "").Replace(strings.TrimSpace(version))
+	if safeVersion == "" {
+		safeVersion = "download"
+	}
+	return fmt.Sprintf("%s-%s.zip", strings.TrimSpace(appID), safeVersion)
 }
 
 func (s *appState) handleAppStoreSettings(w http.ResponseWriter, r *http.Request) {
