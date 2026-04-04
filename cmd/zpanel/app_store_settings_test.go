@@ -115,6 +115,37 @@ func TestAppStoreEffectiveReleasesIncludesCustomRelease(t *testing.T) {
 	t.Fatal("expected custom apache release in effective releases")
 }
 
+func TestAppStoreEffectiveReleasesResolvesPHPMyAdminFromDatabaseGroup(t *testing.T) {
+	root := t.TempDir()
+	settings := appStoreSettingsFile{
+		Downloads: map[string]map[string]string{
+			"database": {
+				"5.2.3": "https://example.com/phpMyAdmin-5.2.3-all-languages.zip",
+			},
+		},
+		Titles: map[string]map[string]string{
+			"database": {
+				"5.2.3": "phpMyAdmin",
+			},
+		},
+	}
+
+	if err := saveAppStoreSettingsToDB(root, settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	releases := appStoreEffectiveReleases(root, "phpmyadmin")
+	if len(releases) != 1 {
+		t.Fatalf("expected one phpmyadmin release from panel.db, got %d", len(releases))
+	}
+	if releases[0].Version != "5.2.3" {
+		t.Fatalf("unexpected phpmyadmin version: %q", releases[0].Version)
+	}
+	if releases[0].URL != "https://example.com/phpMyAdmin-5.2.3-all-languages.zip" {
+		t.Fatalf("unexpected phpmyadmin url: %q", releases[0].URL)
+	}
+}
+
 func TestBuildAppStoreSettingsResponseIncludesEmptyDatabaseAndOtherGroups(t *testing.T) {
 	root := t.TempDir()
 	response := buildAppStoreSettingsResponse(root, "")

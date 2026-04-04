@@ -123,6 +123,48 @@ func TestBuildInstallPlan(t *testing.T) {
 	}
 }
 
+func TestNormalizeRuntimeLayoutMovesLegacyDirectories(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	legacyDownloads := filepath.Join(root, "data", "runtime", "downloads")
+	legacyMySQLTemp := filepath.Join(root, "data", "runtime", "mysql-tmp")
+	legacyPHPMyAdminTemp := filepath.Join(root, "data", "runtime", "phpmyadmin-tmp")
+
+	for _, dir := range []string{legacyDownloads, legacyMySQLTemp, legacyPHPMyAdminTemp} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(legacyDownloads, "apache.zip"), []byte("zip"), 0o644); err != nil {
+		t.Fatalf("write legacy download: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyMySQLTemp, "mysql.tmp"), []byte("tmp"), 0o644); err != nil {
+		t.Fatalf("write legacy mysql tmp: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyPHPMyAdminTemp, "pma.tmp"), []byte("tmp"), 0o644); err != nil {
+		t.Fatalf("write legacy phpmyadmin tmp: %v", err)
+	}
+
+	if err := manager.normalizeRuntimeLayout(); err != nil {
+		t.Fatalf("normalize runtime layout: %v", err)
+	}
+
+	paths := manager.paths()
+	if !fileExists(filepath.Join(paths.downloadsDir, "apache.zip")) {
+		t.Fatal("expected download archive moved to data/downloads")
+	}
+	if !fileExists(filepath.Join(paths.mysqlTempDir, "mysql.tmp")) {
+		t.Fatal("expected mysql temp moved to runtime/tmp/mysql")
+	}
+	if !fileExists(filepath.Join(paths.phpMyAdminTempDir, "pma.tmp")) {
+		t.Fatal("expected phpmyadmin temp moved to runtime/tmp/phpmyadmin")
+	}
+	if fileExists(legacyDownloads) || fileExists(legacyMySQLTemp) || fileExists(legacyPHPMyAdminTemp) {
+		t.Fatal("expected legacy top-level directories removed")
+	}
+}
+
 func TestConfigurePHPWritesAbsoluteExtensionDir(t *testing.T) {
 	root := t.TempDir()
 	manager := &windowsRuntimeManager{projectRoot: root}
@@ -633,7 +675,7 @@ func TestListAppsShowsPHPMyAdminDependencies(t *testing.T) {
 	}
 }
 
-func TestConfigureApacheAddsPHPMyAdminAlias(t *testing.T) {
+func TestConfigureApacheAddsPHPMyAdminLocalToolsVHost(t *testing.T) {
 	root := t.TempDir()
 	manager := &windowsRuntimeManager{projectRoot: root}
 
@@ -680,14 +722,20 @@ func TestConfigureApacheAddsPHPMyAdminAlias(t *testing.T) {
 		t.Fatalf("read conf: %v", err)
 	}
 	text := string(updated)
-	if !strings.Contains(text, "# zPanel phpMyAdmin BEGIN") {
-		t.Fatalf("expected phpmyadmin block in apache config: %s", text)
+	if !strings.Contains(text, "# zPanel Local Tools BEGIN") {
+		t.Fatalf("expected local tools block in apache config: %s", text)
 	}
-	if !strings.Contains(text, "Alias /phpmyadmin/ \""+toForwardPath(phpMyAdminRoot)+"\"") {
-		t.Fatalf("expected phpmyadmin alias in apache config: %s", text)
+	if !strings.Contains(text, "<VirtualHost 127.0.0.1:80>") {
+		t.Fatalf("expected local tools vhost in apache config: %s", text)
 	}
-	if !strings.Contains(text, "SetHandler \"proxy:fcgi://127.0.0.1:"+strconv.Itoa(phpFastCGIPort("8.3.30"))+"/\"") {
+	if !strings.Contains(text, "DocumentRoot \""+toForwardPath(filepath.Join(manager.apacheRoot(), "htdocs"))+"\"") {
+		t.Fatalf("expected local tools docroot in apache config: %s", text)
+	}
+	if !strings.Contains(text, "SetHandler \"proxy:fcgi://127.0.0.1:"+strconv.Itoa(phpFastCGIPort("8.3.30"))+"//./\"") {
 		t.Fatalf("expected phpmyadmin fastcgi handler: %s", text)
+	}
+	if !fileExists(filepath.Join(manager.apacheRoot(), "htdocs", "phpmyadmin", "index.php")) {
+		t.Fatal("expected phpmyadmin public mount to exist")
 	}
 	if !fileExists(manager.phpMyAdminConfigPath()) {
 		t.Fatal("expected phpmyadmin config.inc.php to be created")
