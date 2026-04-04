@@ -305,11 +305,11 @@ func (m *windowsRuntimeManager) paths() runtimePaths {
 		apacheExtractDir:  filepath.Join(runtimeRoot, "apache-dist"),
 		phpRoot:           filepath.Join(runtimeRoot, "php"), // Base PHP dir
 		mysqlExtractDir:   filepath.Join(runtimeRoot, "mysql-dist"),
-		mysqlDataDir:      filepath.Join(runtimeRoot, "mysql-data"),
-		mysqlTempDir:      filepath.Join(runtimeRoot, "tmp", "mysql"),
+		mysqlDataDir:      filepath.Join(runtimeRoot, "mysql-dist", "data"),
+		mysqlTempDir:      filepath.Join(runtimeRoot, "mysql-dist", "tmp"),
 		phpMyAdminDir:     filepath.Join(runtimeRoot, "phpmyadmin"),
 		phpMyAdminTempDir: filepath.Join(runtimeRoot, "tmp", "phpmyadmin"),
-		myIniPath:         filepath.Join(runtimeRoot, "my.ini"),
+		myIniPath:         filepath.Join(runtimeRoot, "mysql-dist", "my.ini"),
 		apacheZip:         filepath.Join(dataRoot, "downloads", runtimeApacheReleases[0].FileName),
 		phpZip:            filepath.Join(dataRoot, "downloads", runtimePHPReleases[0].FileName),
 		mysqlZip:          filepath.Join(dataRoot, "downloads", runtimeMySQLReleases[0].FileName),
@@ -322,7 +322,34 @@ func (m *windowsRuntimeManager) apacheRoot() string {
 }
 
 func (m *windowsRuntimeManager) mysqlRoot() string {
-	root, _ := resolveSingleChildDirectory(m.paths().mysqlExtractDir)
+	root := m.paths().mysqlExtractDir
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return root
+	}
+
+	candidates := make([]string, 0, len(entries))
+	binCandidates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(root, entry.Name())
+		if fileExists(filepath.Join(candidate, "bin", "mysqld.exe")) {
+			return candidate
+		}
+		if fileExists(filepath.Join(candidate, "bin")) || strings.HasPrefix(strings.ToLower(entry.Name()), "mysql-") {
+			binCandidates = append(binCandidates, candidate)
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	if len(binCandidates) == 1 {
+		return binCandidates[0]
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
 	return root
 }
 
@@ -1125,6 +1152,8 @@ func (m *windowsRuntimeManager) normalizeRuntimeLayout() error {
 
 	legacyDownloads := filepath.Join(paths.runtimeRoot, "downloads")
 	legacyMySQLTemp := filepath.Join(paths.runtimeRoot, "mysql-tmp")
+	legacyMySQLData := filepath.Join(paths.runtimeRoot, "mysql-data")
+	legacyMyIni := filepath.Join(paths.runtimeRoot, "my.ini")
 	legacyPHPMyAdminTemp := filepath.Join(paths.runtimeRoot, "phpmyadmin-tmp")
 
 	if err := moveDirectoryContents(legacyDownloads, paths.downloadsDir); err != nil {
@@ -1133,8 +1162,19 @@ func (m *windowsRuntimeManager) normalizeRuntimeLayout() error {
 	if err := moveDirectoryContents(legacyMySQLTemp, paths.mysqlTempDir); err != nil {
 		return err
 	}
+	if err := moveDirectoryContents(legacyMySQLData, paths.mysqlDataDir); err != nil {
+		return err
+	}
 	if err := moveDirectoryContents(legacyPHPMyAdminTemp, paths.phpMyAdminTempDir); err != nil {
 		return err
+	}
+	if fileExists(legacyMyIni) && !fileExists(paths.myIniPath) {
+		if err := os.MkdirAll(filepath.Dir(paths.myIniPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(legacyMyIni, paths.myIniPath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1878,6 +1918,15 @@ func (m *windowsRuntimeManager) configureMySQL() error {
 		return err
 	}
 	root := m.mysqlRoot()
+	if err := os.MkdirAll(filepath.Dir(m.paths().myIniPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.paths().mysqlDataDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.paths().mysqlTempDir, 0o755); err != nil {
+		return err
+	}
 	myIni := fmt.Sprintf("[mysqld]\r\nbasedir=%s\r\ndatadir=%s\r\nport=3307\r\nbind-address=127.0.0.1\r\nmysqlx=0\r\ntmpdir=%s\r\npid-file=%s\r\nlog-error=%s\r\n\r\n[client]\r\nport=3307\r\n",
 		toForwardPath(root),
 		toForwardPath(m.paths().mysqlDataDir),
@@ -1964,6 +2013,12 @@ func (m *windowsRuntimeManager) stopApache() error {
 func (m *windowsRuntimeManager) startMySQL() error {
 	if !fileExists(m.mysqlExe()) {
 		return errors.New("mysql is not installed")
+	}
+	if err := m.normalizeRuntimeLayout(); err != nil {
+		return err
+	}
+	if err := m.configureMySQL(); err != nil {
+		return err
 	}
 	if testTCPPort("127.0.0.1", 3307, 350*time.Millisecond) {
 		return nil

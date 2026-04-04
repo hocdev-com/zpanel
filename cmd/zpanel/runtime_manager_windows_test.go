@@ -129,9 +129,11 @@ func TestNormalizeRuntimeLayoutMovesLegacyDirectories(t *testing.T) {
 
 	legacyDownloads := filepath.Join(root, "data", "runtime", "downloads")
 	legacyMySQLTemp := filepath.Join(root, "data", "runtime", "mysql-tmp")
+	legacyMySQLData := filepath.Join(root, "data", "runtime", "mysql-data")
+	legacyMyIni := filepath.Join(root, "data", "runtime", "my.ini")
 	legacyPHPMyAdminTemp := filepath.Join(root, "data", "runtime", "phpmyadmin-tmp")
 
-	for _, dir := range []string{legacyDownloads, legacyMySQLTemp, legacyPHPMyAdminTemp} {
+	for _, dir := range []string{legacyDownloads, legacyMySQLTemp, legacyMySQLData, legacyPHPMyAdminTemp} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
@@ -141,6 +143,12 @@ func TestNormalizeRuntimeLayoutMovesLegacyDirectories(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(legacyMySQLTemp, "mysql.tmp"), []byte("tmp"), 0o644); err != nil {
 		t.Fatalf("write legacy mysql tmp: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyMySQLData, "mysql.ibd"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write legacy mysql data: %v", err)
+	}
+	if err := os.WriteFile(legacyMyIni, []byte("[mysqld]"), 0o644); err != nil {
+		t.Fatalf("write legacy my.ini: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(legacyPHPMyAdminTemp, "pma.tmp"), []byte("tmp"), 0o644); err != nil {
 		t.Fatalf("write legacy phpmyadmin tmp: %v", err)
@@ -155,13 +163,44 @@ func TestNormalizeRuntimeLayoutMovesLegacyDirectories(t *testing.T) {
 		t.Fatal("expected download archive moved to data/downloads")
 	}
 	if !fileExists(filepath.Join(paths.mysqlTempDir, "mysql.tmp")) {
-		t.Fatal("expected mysql temp moved to runtime/tmp/mysql")
+		t.Fatal("expected mysql temp moved to runtime/mysql-dist/tmp")
+	}
+	if !fileExists(filepath.Join(paths.mysqlDataDir, "mysql.ibd")) {
+		t.Fatal("expected mysql data moved to runtime/mysql-dist/data")
+	}
+	if !fileExists(paths.myIniPath) {
+		t.Fatal("expected my.ini moved to runtime/mysql-dist/my.ini")
 	}
 	if !fileExists(filepath.Join(paths.phpMyAdminTempDir, "pma.tmp")) {
 		t.Fatal("expected phpmyadmin temp moved to runtime/tmp/phpmyadmin")
 	}
-	if fileExists(legacyDownloads) || fileExists(legacyMySQLTemp) || fileExists(legacyPHPMyAdminTemp) {
+	if fileExists(legacyDownloads) || fileExists(legacyMySQLTemp) || fileExists(legacyMySQLData) || fileExists(legacyMyIni) || fileExists(legacyPHPMyAdminTemp) {
 		t.Fatal("expected legacy top-level directories removed")
+	}
+}
+
+func TestMySQLRootPrefersVersionDirectoryWithMysqld(t *testing.T) {
+	root := t.TempDir()
+	manager := &windowsRuntimeManager{projectRoot: root}
+
+	versionRoot := filepath.Join(manager.paths().mysqlExtractDir, "mysql-8.4.8-winx64", "bin")
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		t.Fatalf("mkdir mysql version root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(versionRoot, "mysqld.exe"), []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write mysqld.exe: %v", err)
+	}
+	if err := os.MkdirAll(manager.paths().mysqlDataDir, 0o755); err != nil {
+		t.Fatalf("mkdir mysql data: %v", err)
+	}
+	if err := os.MkdirAll(manager.paths().mysqlTempDir, 0o755); err != nil {
+		t.Fatalf("mkdir mysql tmp: %v", err)
+	}
+
+	got := manager.mysqlRoot()
+	want := filepath.Join(manager.paths().mysqlExtractDir, "mysql-8.4.8-winx64")
+	if got != want {
+		t.Fatalf("expected mysql root %q, got %q", want, got)
 	}
 }
 
