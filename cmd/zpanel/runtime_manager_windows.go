@@ -1012,7 +1012,7 @@ func (m *windowsRuntimeManager) listApps() []runtimeApp {
 		phpMyAdminInstallPath = m.phpMyAdminRoot()
 	}
 	phpMyAdminURL := ""
-	if phpMyAdminReady {
+	if phpMyAdminInstalled {
 		phpMyAdminURL = formatPortURL("127.0.0.1", apachePort, phpMyAdminMountPath)
 	}
 	if phpMyAdminInstalled || len(phpMyAdminReleases) > 0 {
