@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -280,20 +282,20 @@ func (s *appState) runRuntimeAppsAction(action string, appID string, version str
 	case "status":
 		return manager.Status()
 	case "install":
-		s.appStoreMu.Lock()
-		defer s.appStoreMu.Unlock()
+		unlock := s.lockRuntimeTargets(runtimeTargetsForAppID(appID)...)
+		defer unlock()
 		return manager.Install(appID, version, onProgress)
 	case "start":
-		s.appStoreMu.Lock()
-		defer s.appStoreMu.Unlock()
+		unlock := s.lockRuntimeTargets(runtimeTargetsForAppID(appID)...)
+		defer unlock()
 		return manager.Start(appID)
 	case "stop":
-		s.appStoreMu.Lock()
-		defer s.appStoreMu.Unlock()
+		unlock := s.lockRuntimeTargets(runtimeTargetsForAppID(appID)...)
+		defer unlock()
 		return manager.Stop(appID)
 	case "uninstall":
-		s.appStoreMu.Lock()
-		defer s.appStoreMu.Unlock()
+		unlock := s.lockRuntimeTargets(runtimeTargetsForAppID(appID)...)
+		defer unlock()
 		return manager.Uninstall(appID)
 	default:
 		return runtimeAppsResponse{}, errors.New("unsupported action")
@@ -338,6 +340,75 @@ func (s *appState) runInstallJob(job *appInstallJob) {
 	}
 
 	job.complete(response)
+}
+
+func runtimeTargetsForAppID(appID string) []string {
+	baseID := strings.ToLower(strings.TrimSpace(appID))
+	if strings.Contains(baseID, ":") {
+		baseID = strings.SplitN(baseID, ":", 2)[0]
+	}
+
+	switch baseID {
+	case "stack":
+		return []string{"apache", "mysql", "php"}
+	case "apache", "php", "mysql":
+		return []string{baseID}
+	default:
+		return nil
+	}
+}
+
+func (s *appState) lockRuntimeTargets(targets ...string) func() {
+	if len(targets) == 0 {
+		return func() {}
+	}
+
+	seen := make(map[string]struct{}, len(targets))
+	normalized := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = strings.ToLower(strings.TrimSpace(target))
+		if strings.Contains(target, ":") {
+			target = strings.SplitN(target, ":", 2)[0]
+		}
+		if target == "" {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		normalized = append(normalized, target)
+	}
+	sort.Strings(normalized)
+
+	locks := make([]*sync.Mutex, 0, len(normalized))
+	for _, target := range normalized {
+		locks = append(locks, s.runtimeLock(target))
+	}
+	for _, lock := range locks {
+		lock.Lock()
+	}
+
+	return func() {
+		for i := len(locks) - 1; i >= 0; i-- {
+			locks[i].Unlock()
+		}
+	}
+}
+
+func (s *appState) runtimeLock(target string) *sync.Mutex {
+	s.runtimeLocksMu.Lock()
+	defer s.runtimeLocksMu.Unlock()
+
+	if s.runtimeLocks == nil {
+		s.runtimeLocks = map[string]*sync.Mutex{}
+	}
+	lock := s.runtimeLocks[target]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.runtimeLocks[target] = lock
+	}
+	return lock
 }
 
 type runtimeRelease struct {
@@ -399,6 +470,108 @@ func reportProgress(onProgress func(appProgressEvent), percent int, message stri
 	}
 }
 
+const (
+	downloadProbeTimeout    = 45 * time.Second
+	downloadChunkTimeout    = 4 * time.Minute
+	downloadChunkRetryLimit = 4
+	downloadParallelMinSize = 8 << 20
+	downloadParallelWorkers = 6
+	downloadChunkSizeSmall  = 2 << 20
+	downloadChunkSizeMedium = 4 << 20
+	downloadChunkSizeLarge  = 8 << 20
+)
+
+type downloadProbeResult struct {
+	SupportsRanges bool
+	KnownSize      bool
+	TotalSize      int64
+}
+
+type downloadByteRange struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
+type downloadResumeState struct {
+	URL       string              `json:"url"`
+	TotalSize int64               `json:"total_size"`
+	Completed []downloadByteRange `json:"completed"`
+}
+
+type downloadProgressTracker struct {
+	mu           sync.Mutex
+	total        int64
+	completed    int64
+	startPercent int
+	endPercent   int
+	lastPercent  int
+	onProgress   func(appProgressEvent)
+}
+
+func newDownloadProgressTracker(total int64, completed int64, startPercent int, endPercent int, onProgress func(appProgressEvent)) *downloadProgressTracker {
+	tracker := &downloadProgressTracker{
+		total:        total,
+		completed:    completed,
+		startPercent: startPercent,
+		endPercent:   endPercent,
+		lastPercent:  startPercent,
+		onProgress:   onProgress,
+	}
+	if tracker.total > 0 && tracker.completed > 0 {
+		tracker.lastPercent = tracker.percentLocked()
+	}
+	return tracker
+}
+
+func (t *downloadProgressTracker) percentLocked() int {
+	if t.total <= 0 {
+		return t.lastPercent
+	}
+	ratio := float64(t.completed) / float64(t.total)
+	percent := t.startPercent + int(float64(t.endPercent-t.startPercent)*ratio)
+	if percent > t.endPercent {
+		percent = t.endPercent
+	}
+	if percent < t.startPercent {
+		percent = t.startPercent
+	}
+	return percent
+}
+
+func (t *downloadProgressTracker) Report(message string) {
+	if t.onProgress == nil {
+		return
+	}
+
+	t.mu.Lock()
+	percent := t.percentLocked()
+	if percent > t.lastPercent {
+		t.lastPercent = percent
+	}
+	emit := t.lastPercent
+	t.mu.Unlock()
+
+	reportProgress(t.onProgress, emit, message)
+}
+
+func (t *downloadProgressTracker) Add(delta int64, message string) {
+	if delta <= 0 || t.onProgress == nil {
+		return
+	}
+
+	t.mu.Lock()
+	t.completed += delta
+	percent := t.percentLocked()
+	if percent <= t.lastPercent {
+		t.mu.Unlock()
+		return
+	}
+	t.lastPercent = percent
+	t.mu.Unlock()
+
+	reportProgress(t.onProgress, percent, message)
+}
+
 func downloadFile(url string, outPath string, label string, startPercent int, endPercent int, onProgress func(appProgressEvent)) error {
 	if fileExists(outPath) {
 		reportProgress(onProgress, endPercent, "Already available.")
@@ -410,21 +583,41 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 	}
 
 	tempPath := outPath + ".part"
-	resumeOffset := int64(0)
-	if info, err := os.Stat(tempPath); err == nil {
-		resumeOffset = info.Size()
-	} else if !errors.Is(err, os.ErrNotExist) {
+	metaPath := tempPath + ".meta"
+	client := newDownloadHTTPClient()
+
+	probe, err := probeDownload(client, url)
+	if err != nil {
+		return fmt.Errorf("failed to prepare download for %s: %w", label, err)
+	}
+	if probe.KnownSize && probe.TotalSize == 0 {
+		if err := os.WriteFile(outPath, nil, 0o644); err != nil {
+			return err
+		}
+		reportProgress(onProgress, endPercent, "Downloaded.")
+		return nil
+	}
+
+	if probe.SupportsRanges && probe.KnownSize && probe.TotalSize >= downloadParallelMinSize {
+		if err := downloadFileMultiPart(client, url, tempPath, metaPath, label, probe.TotalSize, startPercent, endPercent, onProgress); err != nil {
+			return err
+		}
+	} else {
+		if err := downloadFileSequential(client, url, tempPath, label, probe, startPercent, endPercent, onProgress); err != nil {
+			return err
+		}
+	}
+
+	if err := finalizeDownload(tempPath, outPath, metaPath); err != nil {
 		return err
 	}
 
-	if resumeOffset > 0 {
-		reportProgress(onProgress, startPercent, "Resuming...")
-	} else {
-		reportProgress(onProgress, startPercent, "Downloading...")
-	}
+	reportProgress(onProgress, endPercent, "Downloaded.")
+	return nil
+}
 
-	// Custom client with reasonable timeouts
-	client := &http.Client{
+func newDownloadHTTPClient() *http.Client {
+	return &http.Client{
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -433,109 +626,593 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 30 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConns:          16,
+			MaxIdleConnsPerHost:   8,
 		},
 	}
+}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func probeDownload(client *http.Client, rawURL string) (downloadProbeResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), downloadProbeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return err
+		return downloadProbeResult{}, err
 	}
-	if resumeOffset > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeOffset))
-	}
+	req.Header.Set("Range", "bytes=0-0")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("network error: %w (check your connection)", err)
+		return downloadProbeResult{}, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("failed to download %s: server returned %s", label, resp.Status)
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		totalSize, known := parseContentRangeTotal(resp.Header.Get("Content-Range"))
+		if !known && resp.ContentLength >= 0 {
+			totalSize = resp.ContentLength
+			known = true
+		}
+		return downloadProbeResult{
+			SupportsRanges: true,
+			KnownSize:      known,
+			TotalSize:      totalSize,
+		}, nil
+	case http.StatusRequestedRangeNotSatisfiable:
+		totalSize, known := parseContentRangeTotal(resp.Header.Get("Content-Range"))
+		return downloadProbeResult{
+			SupportsRanges: true,
+			KnownSize:      known,
+			TotalSize:      totalSize,
+		}, nil
+	case http.StatusOK:
+		return downloadProbeResult{
+			SupportsRanges: false,
+			KnownSize:      resp.ContentLength >= 0,
+			TotalSize:      resp.ContentLength,
+		}, nil
+	default:
+		return downloadProbeResult{}, fmt.Errorf("server returned %s", resp.Status)
+	}
+}
+
+func parseContentRangeTotal(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
 	}
 
-	fileFlags := os.O_CREATE | os.O_WRONLY
-	switch {
-	case resumeOffset > 0 && resp.StatusCode == http.StatusPartialContent:
-		fileFlags |= os.O_APPEND
-	case resumeOffset > 0 && resp.StatusCode == http.StatusOK:
+	slash := strings.LastIndex(value, "/")
+	if slash < 0 || slash == len(value)-1 {
+		return 0, false
+	}
+
+	totalPart := strings.TrimSpace(value[slash+1:])
+	if totalPart == "*" {
+		return 0, false
+	}
+
+	var total int64
+	if _, err := fmt.Sscanf(totalPart, "%d", &total); err != nil {
+		return 0, false
+	}
+	return total, true
+}
+
+func downloadFileSequential(client *http.Client, rawURL string, tempPath string, label string, probe downloadProbeResult, startPercent int, endPercent int, onProgress func(appProgressEvent)) error {
+	if probe.SupportsRanges && probe.KnownSize {
+		return downloadFileSequentialRange(client, rawURL, tempPath, label, probe.TotalSize, startPercent, endPercent, onProgress)
+	}
+	return downloadFileSingleRequest(client, rawURL, tempPath, label, probe, startPercent, endPercent, onProgress)
+}
+
+func downloadFileSequentialRange(client *http.Client, rawURL string, tempPath string, label string, totalSize int64, startPercent int, endPercent int, onProgress func(appProgressEvent)) error {
+	resumeOffset := int64(0)
+	if info, err := os.Stat(tempPath); err == nil {
+		resumeOffset = info.Size()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if resumeOffset > totalSize {
 		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		resumeOffset = 0
-		fileFlags |= os.O_TRUNC
-	default:
-		fileFlags |= os.O_TRUNC
 	}
 
-	file, err := os.OpenFile(tempPath, fileFlags, 0o644)
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
-
-	buf := make([]byte, 256*1024)
-	written := resumeOffset
-	totalSize := resp.ContentLength
-	if totalSize > 0 {
-		totalSize += resumeOffset
-	}
-	lastReported := startPercent
-	if totalSize > 0 && written > 0 {
-		ratio := float64(written) / float64(totalSize)
-		lastReported = startPercent + int(float64(endPercent-startPercent)*ratio)
-		if lastReported > endPercent {
-			lastReported = endPercent
-		}
-		reportProgress(onProgress, lastReported, "Resuming...")
+	defer file.Close()
+	if err := file.Truncate(resumeOffset); err != nil {
+		return err
 	}
 
-	// Activity tracker: if no data for 60 seconds, abort
-	timeout := 60 * time.Second
+	tracker := newDownloadProgressTracker(totalSize, resumeOffset, startPercent, endPercent, onProgress)
+	if resumeOffset > 0 {
+		tracker.Report("Resuming...")
+	} else {
+		tracker.Report("Downloading...")
+	}
 
-	for {
-		// Set a deadline for the next read - Note: Body doesn't support SetReadDeadline directly generically
-		// but we can simulate it with a timer to prevent infinite hang on Body.Read
-		done := make(chan bool, 1)
-		var n int
-		var readErr error
+	offset := resumeOffset
+	chunkSize := downloadChunkSizeFor(totalSize)
+	for offset < totalSize {
+		end := offset + chunkSize - 1
+		if end >= totalSize {
+			end = totalSize - 1
+		}
+		if err := downloadChunkToWriter(client, rawURL, file, offset, offset, end, tracker, "Downloading..."); err != nil {
+			return fmt.Errorf("failed to download %s: %w", label, err)
+		}
+		offset = end + 1
+	}
 
-		go func() {
-			n, readErr = resp.Body.Read(buf)
-			done <- true
-		}()
+	return file.Sync()
+}
 
-		select {
-		case <-done:
-			// Read completed
-		case <-time.After(timeout):
-			return fmt.Errorf("download stalled: no data received for %v", timeout)
+func downloadFileSingleRequest(client *http.Client, rawURL string, tempPath string, label string, probe downloadProbeResult, startPercent int, endPercent int, onProgress func(appProgressEvent)) error {
+	if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	totalSize := int64(0)
+	if probe.KnownSize {
+		totalSize = probe.TotalSize
+	}
+	tracker := newDownloadProgressTracker(totalSize, 0, startPercent, endPercent, onProgress)
+	tracker.Report("Downloading...")
+
+	var lastErr error
+	for attempt := 1; attempt <= downloadChunkRetryLimit; attempt++ {
+		if _, err := file.Seek(0, 0); err != nil {
+			return err
+		}
+		if err := file.Truncate(0); err != nil {
+			return err
+		}
+		tracker = newDownloadProgressTracker(totalSize, 0, startPercent, endPercent, onProgress)
+		tracker.Report("Downloading...")
+
+		ctx, cancel := context.WithTimeout(context.Background(), downloadChunkTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			cancel()
+			return err
 		}
 
-		if n > 0 {
-			if _, err := file.Write(buf[:n]); err != nil {
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("server returned %s", resp.Status)
+			resp.Body.Close()
+			cancel()
+			continue
+		}
+
+		_, copyErr := copyResponseToWriter(resp.Body, file, tracker, "Downloading...")
+		resp.Body.Close()
+		cancel()
+		if copyErr == nil {
+			return file.Sync()
+		}
+		lastErr = copyErr
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("download failed")
+	}
+	return fmt.Errorf("failed to download %s: %w", label, lastErr)
+}
+
+func downloadFileMultiPart(client *http.Client, rawURL string, tempPath string, metaPath string, label string, totalSize int64, startPercent int, endPercent int, onProgress func(appProgressEvent)) error {
+	state, err := loadDownloadResumeState(metaPath)
+	if err != nil {
+		return err
+	}
+	if state == nil || state.URL != rawURL || state.TotalSize != totalSize {
+		state = &downloadResumeState{
+			URL:       rawURL,
+			TotalSize: totalSize,
+		}
+	}
+
+	if info, err := os.Stat(tempPath); err == nil && info.Size() > 0 && len(state.Completed) == 0 {
+		size := info.Size()
+		if size >= totalSize {
+			if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
-			written += int64(n)
-			if totalSize > 0 {
-				ratio := float64(written) / float64(totalSize)
-				progress := startPercent + int(float64(endPercent-startPercent)*ratio)
-				if progress > endPercent {
-					progress = endPercent
-				}
-				if progress > lastReported {
-					lastReported = progress
-					reportProgress(onProgress, progress, "Downloading...")
-				}
-			}
+			size = 0
 		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
+		if size > totalSize {
+			size = totalSize
+		}
+		if size > 0 {
+			state.Completed = append(state.Completed, downloadByteRange{Start: 0, End: size - 1})
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	state.Completed = mergeDownloadRanges(state.Completed)
+	if err := saveDownloadResumeState(metaPath, state); err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if err := file.Truncate(totalSize); err != nil {
+		return err
+	}
+
+	completedBytes := totalCompletedBytes(state.Completed)
+	tracker := newDownloadProgressTracker(totalSize, completedBytes, startPercent, endPercent, onProgress)
+	if completedBytes > 0 {
+		tracker.Report("Resuming with multiple connections...")
+	} else {
+		tracker.Report("Downloading with multiple connections...")
+	}
+
+	segments := buildMissingDownloadSegments(totalSize, state.Completed, downloadChunkSizeFor(totalSize))
+	if len(segments) == 0 {
+		return file.Sync()
+	}
+
+	workers := downloadParallelWorkers
+	if workers > len(segments) {
+		workers = len(segments)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	segmentCh := make(chan downloadByteRange, len(segments))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	var stateMu sync.Mutex
+
+	workerFn := func() {
+		defer wg.Done()
+		for segment := range segmentCh {
+			if err := downloadRangeSegment(client, rawURL, file, segment, tracker, "Downloading with multiple connections..."); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
 			}
-			return readErr
+
+			stateMu.Lock()
+			state.Completed = mergeDownloadRanges(append(state.Completed, segment))
+			saveErr := saveDownloadResumeState(metaPath, state)
+			stateMu.Unlock()
+			if saveErr != nil {
+				select {
+				case errCh <- saveErr:
+				default:
+				}
+				return
+			}
 		}
 	}
 
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go workerFn()
+	}
+
+	for _, segment := range segments {
+		select {
+		case err := <-errCh:
+			close(segmentCh)
+			wg.Wait()
+			return fmt.Errorf("failed to download %s: %w", label, err)
+		default:
+		}
+		segmentCh <- segment
+	}
+	close(segmentCh)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return fmt.Errorf("failed to download %s: %w", label, err)
+	default:
+	}
+
+	return file.Sync()
+}
+
+func downloadRangeSegment(client *http.Client, rawURL string, file *os.File, segment downloadByteRange, tracker *downloadProgressTracker, message string) error {
+	for attempt := 1; attempt <= downloadChunkRetryLimit; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), downloadChunkTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", segment.Start, segment.End))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			if attempt == downloadChunkRetryLimit {
+				return err
+			}
+			continue
+		}
+
+		if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("server returned %s", resp.Status)
+			resp.Body.Close()
+			cancel()
+			if attempt == downloadChunkRetryLimit {
+				return err
+			}
+			continue
+		}
+
+		offset := segment.Start
+		if resp.StatusCode == http.StatusOK && (segment.Start != 0 || segment.End < segment.Start) {
+			err = errors.New("server ignored range request")
+			resp.Body.Close()
+			cancel()
+			if attempt == downloadChunkRetryLimit {
+				return err
+			}
+			continue
+		}
+
+		_, err = copyResponseToWriterAt(resp.Body, file, offset, tracker, message)
+		resp.Body.Close()
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if attempt == downloadChunkRetryLimit {
+			return err
+		}
+	}
+
+	return errors.New("segment download failed")
+}
+
+func downloadChunkToWriter(client *http.Client, rawURL string, file *os.File, writeOffset int64, rangeStart int64, rangeEnd int64, tracker *downloadProgressTracker, message string) error {
+	var lastErr error
+	for attempt := 1; attempt <= downloadChunkRetryLimit; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), downloadChunkTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusPartialContent {
+			lastErr = fmt.Errorf("server returned %s", resp.Status)
+			resp.Body.Close()
+			cancel()
+			continue
+		}
+
+		_, err = copyResponseToWriterAt(resp.Body, file, writeOffset, tracker, message)
+		resp.Body.Close()
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("chunk download failed")
+	}
+	return lastErr
+}
+
+func copyResponseToWriter(body io.Reader, file *os.File, tracker *downloadProgressTracker, message string) (int64, error) {
+	buf := make([]byte, 256*1024)
+	var written int64
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
+				return written, writeErr
+			}
+			written += int64(n)
+			tracker.Add(int64(n), message)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return written, nil
+			}
+			return written, err
+		}
+	}
+}
+
+func copyResponseToWriterAt(body io.Reader, file *os.File, offset int64, tracker *downloadProgressTracker, message string) (int64, error) {
+	buf := make([]byte, 256*1024)
+	var written int64
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			if _, writeErr := file.WriteAt(buf[:n], offset+written); writeErr != nil {
+				return written, writeErr
+			}
+			written += int64(n)
+			tracker.Add(int64(n), message)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return written, nil
+			}
+			return written, err
+		}
+	}
+}
+
+func downloadChunkSizeFor(totalSize int64) int64 {
+	switch {
+	case totalSize >= 512<<20:
+		return downloadChunkSizeLarge
+	case totalSize >= 64<<20:
+		return downloadChunkSizeMedium
+	default:
+		return downloadChunkSizeSmall
+	}
+}
+
+func buildMissingDownloadSegments(totalSize int64, completed []downloadByteRange, chunkSize int64) []downloadByteRange {
+	if totalSize <= 0 {
+		return nil
+	}
+	if chunkSize <= 0 {
+		chunkSize = downloadChunkSizeSmall
+	}
+
+	completed = mergeDownloadRanges(completed)
+	var segments []downloadByteRange
+	cursor := int64(0)
+	for _, done := range completed {
+		if done.Start > cursor {
+			segments = append(segments, splitDownloadRange(downloadByteRange{Start: cursor, End: done.Start - 1}, chunkSize)...)
+		}
+		if done.End+1 > cursor {
+			cursor = done.End + 1
+		}
+	}
+	if cursor < totalSize {
+		segments = append(segments, splitDownloadRange(downloadByteRange{Start: cursor, End: totalSize - 1}, chunkSize)...)
+	}
+	return segments
+}
+
+func splitDownloadRange(segment downloadByteRange, chunkSize int64) []downloadByteRange {
+	if segment.End < segment.Start {
+		return nil
+	}
+	var segments []downloadByteRange
+	for start := segment.Start; start <= segment.End; start += chunkSize {
+		end := start + chunkSize - 1
+		if end > segment.End {
+			end = segment.End
+		}
+		segments = append(segments, downloadByteRange{Start: start, End: end})
+	}
+	return segments
+}
+
+func mergeDownloadRanges(ranges []downloadByteRange) []downloadByteRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+
+	filtered := make([]downloadByteRange, 0, len(ranges))
+	for _, item := range ranges {
+		if item.Start < 0 || item.End < item.Start {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].Start == filtered[j].Start {
+			return filtered[i].End < filtered[j].End
+		}
+		return filtered[i].Start < filtered[j].Start
+	})
+
+	merged := []downloadByteRange{filtered[0]}
+	for _, item := range filtered[1:] {
+		last := &merged[len(merged)-1]
+		if item.Start <= last.End+1 {
+			if item.End > last.End {
+				last.End = item.End
+			}
+			continue
+		}
+		merged = append(merged, item)
+	}
+	return merged
+}
+
+func totalCompletedBytes(ranges []downloadByteRange) int64 {
+	var total int64
+	for _, item := range mergeDownloadRanges(ranges) {
+		total += item.End - item.Start + 1
+	}
+	return total
+}
+
+func loadDownloadResumeState(metaPath string) (*downloadResumeState, error) {
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var state downloadResumeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		_ = os.Remove(metaPath)
+		return nil, nil
+	}
+	return &state, nil
+}
+
+func saveDownloadResumeState(metaPath string, state *downloadResumeState) error {
+	if state == nil {
+		return nil
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	tmpPath := metaPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, metaPath)
+}
+
+func finalizeDownload(tempPath string, outPath string, metaPath string) error {
+	file, err := os.OpenFile(tempPath, os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
 	if err := file.Sync(); err != nil {
 		file.Close()
 		return err
@@ -543,11 +1220,14 @@ func downloadFile(url string, outPath string, label string, startPercent int, en
 	if err := file.Close(); err != nil {
 		return err
 	}
+	if err := os.Remove(outPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := os.Rename(tempPath, outPath); err != nil {
 		return err
 	}
-
-	reportProgress(onProgress, endPercent, "Downloaded.")
+	_ = os.Remove(metaPath)
+	_ = os.Remove(metaPath + ".tmp")
 	return nil
 }
 

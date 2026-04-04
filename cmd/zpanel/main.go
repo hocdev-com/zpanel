@@ -93,6 +93,8 @@ type appState struct {
 	routingMu       sync.Mutex
 	appJobsMu       sync.Mutex
 	appJobs         map[string]*appInstallJob
+	runtimeLocksMu  sync.Mutex
+	runtimeLocks    map[string]*sync.Mutex
 }
 
 type phpExtensionSettingsProvider interface {
@@ -442,6 +444,7 @@ func main() {
 		metrics:         newMetricsCache(),
 		statusSnapshot:  newStatusSnapshotCache(),
 		appJobs:         map[string]*appInstallJob{},
+		runtimeLocks:    map[string]*sync.Mutex{},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -1307,9 +1310,7 @@ func (s *appState) handleOpenFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appStoreMu.Lock()
 	manager := newRuntimeManager(s.appRoot)
-	s.appStoreMu.Unlock()
 
 	type pathProvider interface {
 		InstallFolderFor(id string) string
@@ -1465,12 +1466,12 @@ func (s *appState) handleSaveAppSetting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.appStoreMu.Lock()
+	unlockRuntime := s.lockRuntimeTargets("apache", "php")
 	err := phpProvider.SavePHPExtensions(version, req.EnabledExtensions)
 	if err == nil {
 		err = phpProvider.SyncWebsiteRouting()
 	}
-	s.appStoreMu.Unlock()
+	unlockRuntime()
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return

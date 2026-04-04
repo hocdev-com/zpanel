@@ -1968,6 +1968,10 @@ func (m *windowsRuntimeManager) RunStartupChecks() error {
 func (m *windowsRuntimeManager) ensureVCRuntime(onProgress func(appProgressEvent)) error {
 	system32 := filepath.Join(os.Getenv("WINDIR"), "System32")
 	dllPath := filepath.Join(system32, "vcruntime140.dll")
+	redistPath := filepath.Join(m.paths().downloadsDir, "vc_redist.x64.exe")
+	defer func() {
+		_ = os.Remove(redistPath)
+	}()
 	if onProgress != nil {
 		onProgress(appProgressEvent{Percent: 6, Message: "Checking Microsoft Visual C++ Runtime..."})
 	}
@@ -2000,7 +2004,6 @@ func (m *windowsRuntimeManager) ensureVCRuntime(onProgress func(appProgressEvent
 	}
 
 	redistURL := "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-	redistPath := filepath.Join(m.paths().downloadsDir, "vc_redist.x64.exe")
 
 	if err := downloadFile(redistURL, redistPath, "Visual C++ Redistributable", 7, 12, onProgress); err != nil {
 		return fmt.Errorf("failed to download redist: %w", err)
