@@ -1066,7 +1066,7 @@ function buildGenericVersionRows(app) {
         const statusLabel = isThisVersionInstalled
             ? app.status_label
             : installBlockedByInstalledVersion
-                ? "Uninstall current first"
+                ? "Stopped"
             : canInstall
                 ? "Not installed"
                 : (app.can_install === false ? (app.status_label || "Configured") : "Not installed");
